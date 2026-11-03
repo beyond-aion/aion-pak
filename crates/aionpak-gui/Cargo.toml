@@ -1,0 +1,63 @@
+[package]
+name = "aionpak-gui"
+version.workspace = true
+authors.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Desktop browser and job runner for Aion client .pak archives"
+
+[[bin]]
+name = "aionpak"
+path = "src/main.rs"
+
+[dependencies]
+aionpak-commons = { version = "1.0.0", path = "../aionpak-commons" }
+aionpak-cli = { version = "1.0.0", path = "../aionpak-cli" }
+# OpenGL only: the default wgpu renderer roughly doubles the size of the program for no gain here.
+eframe = { version = "0.37.0", default-features = false, features = [
+	"clipboard",
+	"glow",
+	"links",
+	# Fallback to the fonts the OS has: Korean and Chinese text in the client's files would be boxes otherwise.
+	"system_fonts",
+	"wayland",
+	"x11",
+] }
+egui = { version = "0.37.0", default-features = false }
+egui_extras = "0.37.0"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "jpeg", "png", "tga"] }
+rayon = "1.12.0"
+# Ogg Vorbis for the sound preview, pure Rust.
+lewton = "0.10.2"
+rfd = "0.17.2"
+
+# On Windows the window tries wgpu (Direct3D 12, with the WARP software adapter where there is no GPU driver)
+# before OpenGL: a virtual machine or a remote desktop often has no usable OpenGL. Linux keeps OpenGL only.
+[target.'cfg(windows)'.dependencies.eframe]
+version = "0.37.0"
+default-features = false
+features = ["wgpu"]
+
+# The window program borrows the terminal's console when it is asked to run a command.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_Security",
+	"Win32_Storage_FileSystem",
+	"Win32_System_Console",
+	"Win32_Media_Audio",
+	"Win32_System_SystemInformation",
+	"Win32_UI_Shell",
+	"Win32_UI_WindowsAndMessaging",
+] }
+
+# The log stamps every line with the local time, which the C library already knows.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The sound preview opens PulseAudio (or PipeWire's stand-in for it) at run time: a system without it still runs.
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
+
+[build-dependencies]
+winresource = "0.1"

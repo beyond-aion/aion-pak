@@ -1,0 +1,72 @@
+# Builds the programs for Windows and Linux when a version tag is pushed (git tag v1.0.0 && git push origin v1.0.0)
+# and attaches them to a GitHub release of that name, as plain files: nothing to unpack.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --workspace
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/aionpak.exe target/release/aionpak-cli.exe dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    # Build against glibc 2.39 (Ubuntu 24.04).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: |
+          cargo build --release --workspace
+          # A static command line tool: runs on any distribution and in minimal containers.
+          cargo build --release -p aionpak-cli --target x86_64-unknown-linux-musl
+      - name: Collect
+        run: |
+          mkdir dist
+          cp target/release/aionpak dist/aionpak-linux
+          cp target/release/aionpak-cli dist/aionpak-cli-linux
+          cp target/x86_64-unknown-linux-musl/release/aionpak-cli dist/aionpak-cli-linux-static
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: dist/*
+
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true

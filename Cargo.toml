@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/aionpak-commons", "crates/aionpak-cli", "crates/aionpak-gui"]
+# One `cargo build --release` builds the shared code, the command line tool and the window program.
+default-members = ["crates/aionpak-commons", "crates/aionpak-cli", "crates/aionpak-gui"]
+
+[workspace.package]
+version = "1.0.0"
+authors = ["Birthright"]
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# An optimised build for trying changes: `cargo build --profile fast`. Code generation runs on every core, so a
+# rebuild takes about 8 s instead of 40; the program is about 20 % larger. Ship `release`.
+[profile.fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16

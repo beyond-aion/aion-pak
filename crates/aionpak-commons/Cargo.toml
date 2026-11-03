@@ -1,0 +1,22 @@
+[package]
+name = "aionpak-commons"
+version.workspace = true
+authors.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Shared code of the aionpak tools: the archive format, the client's XML forms and the job plumbing"
+
+[lib]
+name = "aionpak_commons"
+path = "src/lib.rs"
+
+[dependencies]
+crc32fast = "1.5.3"
+encoding_rs = "0.8.42"
+indexmap = "2.14.2"
+libdeflater = "1.26.1"
+memmap2 = "0.9.12"
+rayon = "1.12.0"
+rustc-hash = "2.1.3"
+thiserror = "2.0.21"
+walkdir = "2.5.0"

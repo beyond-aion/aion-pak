@@ -1,0 +1,56 @@
+# Maintainer: Birthright <birthright5050 at gmail dot com>
+# Built from the release's source. Update: set pkgver, run `updpkgsums` and
+# `makepkg --printsrcinfo > .SRCINFO`, then push to the AUR repository.
+pkgname=aionpak
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Browse, extract, edit and repack the .pak archives of the Aion client (desktop app and command line)"
+arch=('x86_64')
+url="https://github.com/beyond-aion/aion-pak"
+license=('GPL-3.0-or-later')
+# Loaded at run time rather than linked: OpenGL through libglvnd, keyboard layouts, the session bus.
+depends=('gcc-libs' 'glibc' 'dbus' 'libglvnd' 'libxkbcommon')
+makedepends=('cargo')
+optdepends=('wayland: Wayland sessions'
+            'libx11: X11 sessions'
+            'libxcursor: X11 sessions'
+            'libxi: X11 sessions'
+            'libxrandr: X11 sessions'
+            'xdg-desktop-portal: file dialogs')
+# makepkg's LTO flags would reach the C code of libdeflate and clash with Rust's own LTO.
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+_src() { cd "aion-pak-$pkgver"; }
+
+prepare() {
+  _src
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  _src
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --workspace
+}
+
+check() {
+  _src
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --workspace
+}
+
+package() {
+  _src
+  install -Dm755 target/release/aionpak "$pkgdir/usr/bin/aionpak"
+  install -Dm755 target/release/aionpak-cli "$pkgdir/usr/bin/aionpak-cli"
+  install -Dm644 packaging/linux/aionpak.desktop "$pkgdir/usr/share/applications/aionpak.desktop"
+  for size in 16 32 48 64 128 256 512; do
+    install -Dm644 "assets/icons/aionpak-$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/aionpak.png"
+  done
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

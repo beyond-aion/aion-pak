@@ -1,0 +1,39 @@
+# Maintainer: Birthright <birthright5050 at gmail dot com>
+# The programs from the GitHub release, prebuilt. Update: set pkgver, run `updpkgsums` and
+# `makepkg --printsrcinfo > .SRCINFO`, then push to the AUR repository.
+pkgname=aionpak-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Browse, extract, edit and repack the .pak archives of the Aion client (desktop app and command line)"
+arch=('x86_64')
+url="https://github.com/beyond-aion/aion-pak"
+license=('GPL-3.0-or-later')
+# Loaded at run time rather than linked: OpenGL through libglvnd, keyboard layouts, the session bus.
+depends=('gcc-libs' 'glibc' 'dbus' 'libglvnd' 'libxkbcommon')
+optdepends=('wayland: Wayland sessions'
+            'libx11: X11 sessions'
+            'libxcursor: X11 sessions'
+            'libxi: X11 sessions'
+            'libxrandr: X11 sessions'
+            'xdg-desktop-portal: file dialogs')
+provides=('aionpak')
+conflicts=('aionpak')
+_raw="https://raw.githubusercontent.com/beyond-aion/aion-pak/v$pkgver"
+source=("aionpak-$pkgver::$url/releases/download/v$pkgver/aionpak-linux"
+        "aionpak-cli-$pkgver::$url/releases/download/v$pkgver/aionpak-cli-linux"
+        "aionpak-$pkgver.desktop::$_raw/packaging/linux/aionpak.desktop"
+        "aionpak-48-$pkgver.png::$_raw/assets/icons/aionpak-48.png"
+        "aionpak-256-$pkgver.png::$_raw/assets/icons/aionpak-256.png"
+        "aionpak-512-$pkgver.png::$_raw/assets/icons/aionpak-512.png"
+        "LICENSE-$pkgver::$_raw/LICENSE")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "aionpak-$pkgver" "$pkgdir/usr/bin/aionpak"
+  install -Dm755 "aionpak-cli-$pkgver" "$pkgdir/usr/bin/aionpak-cli"
+  install -Dm644 "aionpak-$pkgver.desktop" "$pkgdir/usr/share/applications/aionpak.desktop"
+  for size in 48 256 512; do
+    install -Dm644 "aionpak-$size-$pkgver.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/aionpak.png"
+  done
+  install -Dm644 "LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Aion Pak
+GenericName=Archive tool
+Comment=Browse, extract, pack and check Aion client .pak archives
+Exec=aionpak %f
+Icon=aionpak
+Terminal=false
+Categories=Utility;Archiving;
+StartupWMClass=aionpak
