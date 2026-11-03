@@ -31,8 +31,7 @@ Everything is available in the desktop app and, with the same options, on the co
 
 1. Download the program from [Releases](https://github.com/beyond-aion/aion-pak/releases): `aionpak.exe` on
    Windows, `aionpak-linux` on Linux (make it executable with `chmod +x aionpak-linux`). Nothing to install or
-   unpack. On Arch Linux, install `aionpak-bin` (prebuilt) or `aionpak` (built from source) from the AUR. You can
-   also [build it yourself](#building).
+   unpack. You can also [build it yourself](#building).
 2. Start it and drop a `.pak` file, or your client's folder, onto the window.
 3. Press **Extract all**. Leave **Decode XML and HTML** on to get readable text. The first time, the app asks where to put
    the files.
@@ -85,12 +84,9 @@ the volumes go into the client and the archives they replace move to a backup fo
 Close the game before either.
 
 **Windows: SmartScreen and Defender.** The releases are not code-signed yet, so the first start may show
-"Windows protected your PC": choose **More info → Run anyway**, after checking the file against `SHA256SUMS.txt`
-from the same release. Microsoft Defender scans every file the program writes, and scans more thoroughly for a
-program it does not know yet; on a large extraction that can make it about twice as slow. If you trust the
-release, add `aionpak.exe` and `aionpak-cli.exe` as process exclusions (Windows Security → Virus & threat
-protection → Manage settings → Exclusions → Add an exclusion → Process), or extract onto a Dev Drive on
-Windows 11.
+"Windows protected your PC". Check the downloaded file against `SHA256SUMS.txt` before running it.
+Microsoft Defender's real-time protection may significantly slow down large extraction operations by scanning
+newly created files. The impact depends on the system and Defender's configuration.
 
 **Linux desktop integration.** On start the app adds itself to the application menu with its icon
 (`~/.local/share/applications/aionpak.desktop`), because on Wayland the task bar takes the icon from there. If
