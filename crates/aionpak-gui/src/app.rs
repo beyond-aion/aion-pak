@@ -1657,7 +1657,8 @@ impl Shell {
 	fn empty_state(&mut self, ui: &mut egui::Ui, pal: &Palette, action: &mut WorkspaceAction) {
 		let height = ui.available_height();
 		let width = ui.available_width().min(520.0);
-		ui.vertical_centered(|ui| {
+		// Scrolls: a full recent list under the buttons is taller than a short window.
+		screen_scroll(ui, |ui| ui.vertical_centered(|ui| {
 			ui.add_space((height * 0.12).min(90.0));
 			ui.set_max_width(width);
 			theme::mark(ui, 64.0);
@@ -1711,8 +1712,9 @@ impl Shell {
 						}
 					}
 				});
+				ui.add_space(16.0);
 			}
-		});
+		}));
 	}
 
 	fn help_ui(&self, ui: &mut egui::Ui) {
