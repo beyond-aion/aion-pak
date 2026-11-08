@@ -253,6 +253,8 @@ pub struct Shell {
 	report_wrap: WrapCache,
 	/// The problems of the job that is running or just finished.
 	job_problems: Vec<LogLine>,
+	/// The log was cleared since that job started: its warnings and errors are no longer there to show.
+	job_lines_cleared: bool,
 	verify_report: Vec<LogLine>,
 	compare_view: compare_view::CompareView,
 	extract_bar: forms::ExtractBar,
@@ -301,6 +303,7 @@ impl Shell {
 			log_wrap: WrapCache::default(),
 			report_wrap: WrapCache::default(),
 			job_problems: Vec::new(),
+			job_lines_cleared: false,
 			verify_report: Vec::new(),
 			compare_view: compare_view::CompareView::default(),
 			pak_form: forms::PakForm::default(),
@@ -591,6 +594,7 @@ impl Shell {
 			previous.progress.cancel();
 		}
 		self.job_problems.clear();
+		self.job_lines_cleared = false;
 		self.log_push(LogLine {
 			at: clock::Stamp::now(),
 			error: false,
@@ -979,7 +983,7 @@ impl Shell {
 							ui.set_clip_rect(ui.max_rect());
 							match &mut self.job {
 								Some(job) if !job.finished => running_job(ui, job),
-								Some(job) => finished_job(ui, job, &mut open_log),
+								Some(job) => finished_job(ui, job, self.job_lines_cleared, &mut open_log),
 								None => idle(ui, &pal, self.form_scan.is_some()),
 							}
 						},
@@ -1657,7 +1661,8 @@ impl Shell {
 	fn empty_state(&mut self, ui: &mut egui::Ui, pal: &Palette, action: &mut WorkspaceAction) {
 		let height = ui.available_height();
 		let width = ui.available_width().min(520.0);
-		ui.vertical_centered(|ui| {
+		// Scrolls: a full recent list under the buttons is taller than a short window.
+		screen_scroll(ui, |ui| ui.vertical_centered(|ui| {
 			ui.add_space((height * 0.12).min(90.0));
 			ui.set_max_width(width);
 			theme::mark(ui, 64.0);
@@ -1711,8 +1716,9 @@ impl Shell {
 						}
 					}
 				});
+				ui.add_space(16.0);
 			}
-		});
+		}));
 	}
 
 	fn help_ui(&self, ui: &mut egui::Ui) {
@@ -2191,6 +2197,7 @@ impl Shell {
 			self.log.clear();
 			self.log_selected.clear();
 			self.log_anchor = None;
+			self.job_lines_cleared = self.job.is_some();
 		}
 		if close {
 			self.log_open = false;
@@ -3881,7 +3888,9 @@ fn busy_bar(ui: &mut egui::Ui, width: f32) {
 	}
 }
 
-fn finished_job(ui: &mut egui::Ui, job: &Job, open_log: &mut bool) {
+/// The outcome stays after the log is cleared: it is still what the job did. Only the link to the lines goes, since
+/// it would open an empty log.
+fn finished_job(ui: &mut egui::Ui, job: &Job, lines_cleared: bool, open_log: &mut bool) {
 	let pal = theme::pal(ui.ctx());
 	let errors = job.progress.error_count();
 	let warnings = job.progress.problem_count() - errors;
@@ -3904,7 +3913,9 @@ fn finished_job(ui: &mut egui::Ui, job: &Job, open_log: &mut bool) {
 			(e, 0) => plural(e, "error"),
 			(e, w) => format!("{}, {}", plural(e, "error"), plural(w, "warning")),
 		};
-		if ui.small_button(text).on_hover_text("Show them in the log").clicked() {
+		if lines_cleared {
+			ui.label(theme::mono(text).color(pal.muted())).on_hover_text("Cleared from the log");
+		} else if ui.small_button(text).on_hover_text("Show them in the log").clicked() {
 			*open_log = true;
 		}
 	}
