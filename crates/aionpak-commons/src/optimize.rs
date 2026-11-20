@@ -627,13 +627,23 @@ pub fn undo(client: &Path, backup: &Path, progress: &Progress) -> Result<(usize,
 	let list = fs::read_to_string(backup.join(LIST_NAME))
 		.map_err(|e| Error::Format(format!("{}: {e}", backup.join(LIST_NAME).display())))?;
 	let (mut deleted, mut restored) = (0, 0);
-	let entries: Vec<(&str, &str)> = list.lines().filter_map(|l| l.split_once('\t')).collect();
-	let replaced: HashSet<&str> = entries.iter().filter(|(k, _)| *k == "replaced").map(|(_, r)| *r).collect();
+	// The list holds paths the way the system that wrote it spells them; a list written on Windows has `\`, which
+	// Linux takes as part of the name. `/` separates on both.
+	let entries: Vec<(&str, String)> = list
+		.lines()
+		.filter_map(|l| l.split_once('\t'))
+		.map(|(k, r)| (k, r.replace('\\', "/")))
+		.collect();
+	let replaced: HashSet<&str> = entries
+		.iter()
+		.filter(|(k, _)| *k == "replaced")
+		.map(|(_, r)| r.as_str())
+		.collect();
 	for (kind, rel) in &entries {
 		if *kind == "volume" {
 			let v = client.join(rel);
 			// An archive recompressed in place is both; without its backup copy, deleting it would lose it.
-			if replaced.contains(rel) && !backup.join(rel).exists() {
+			if replaced.contains(rel.as_str()) && !backup.join(rel).exists() {
 				progress.error(format!("{}: no copy in the backup, left as it is", v.display()));
 				continue;
 			}
@@ -986,4 +996,35 @@ fn recompress(
 	list.flush()?;
 	fs::rename(&tmp, &dst)?;
 	Ok(Some((before, after)))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn scratch(name: &str) -> PathBuf {
+		let d = std::env::temp_dir().join(format!("aionpak-optimize-{name}-{}", std::process::id()));
+		let _ = fs::remove_dir_all(&d);
+		fs::create_dir_all(&d).unwrap();
+		d
+	}
+
+	#[test]
+	fn undo_reads_a_list_written_on_windows() {
+		let dir = scratch("undo");
+		let (client, backup) = (dir.join("client"), dir.join("backup"));
+		fs::create_dir_all(client.join("Data")).unwrap();
+		fs::write(client.join("Data/!merged_0000.pak"), b"volume").unwrap();
+		fs::create_dir_all(backup.join("Data/x")).unwrap();
+		fs::write(backup.join("Data/x/x.pak"), b"original").unwrap();
+		fs::write(
+			backup.join(LIST_NAME),
+			"# header\nvolume\tData\\!merged_0000.pak\nreplaced\tData\\x\\x.pak\n",
+		)
+		.unwrap();
+		assert_eq!(undo(&client, &backup, &Progress::default()).unwrap(), (1, 1));
+		assert!(!client.join("Data/!merged_0000.pak").exists());
+		assert_eq!(fs::read(client.join("Data/x/x.pak")).unwrap(), b"original");
+		let _ = fs::remove_dir_all(&dir);
+	}
 }
