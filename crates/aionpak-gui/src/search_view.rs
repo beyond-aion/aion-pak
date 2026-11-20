@@ -114,11 +114,13 @@ impl SearchView {
 		let mut open = None;
 		theme::card(pal).inner_margin(Margin::same(6)).show(ui, |ui| {
 			ui.set_width(ui.available_width());
+			// Before the list, not inside it: `show_rows` counts the spacing into the height of a row when it works
+			// out how many rows fill the view, and with it the bottom third stayed empty.
+			ui.spacing_mut().item_spacing.y = 0.0;
 			egui::ScrollArea::vertical()
 				.auto_shrink([false, true])
 				.max_height(ui.available_height().max(240.0))
 				.show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
-					ui.spacing_mut().item_spacing.y = 0.0;
 					for index in range {
 						if let Some(action) = self.row(ui, pal, index) {
 							self.picked = Some(index);
