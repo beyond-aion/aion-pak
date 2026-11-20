@@ -21,7 +21,7 @@ pub fn find_paks(root: &Path) -> Result<Vec<PathBuf>> {
 	for e in walkdir::WalkDir::new(root).sort_by_file_name() {
 		let e = e.map_err(|e| Error::Io(e.into()))?;
 		if e.file_type().is_file() && is_pak(e.file_name()) {
-			out.push(e.path().strip_prefix(root).unwrap_or(e.path()).to_path_buf());
+			out.push(e.path().trim_prefix(root).to_path_buf());
 		}
 	}
 	Ok(out)
@@ -34,7 +34,7 @@ pub fn find_pak_dirs(root: &Path) -> Result<Vec<PathBuf>> {
 	while let Some(e) = it.next() {
 		let e = e.map_err(|e| Error::Io(e.into()))?;
 		if e.file_type().is_dir() && is_pak(e.file_name()) {
-			out.push(e.path().strip_prefix(root).unwrap_or(e.path()).to_path_buf());
+			out.push(e.path().trim_prefix(root).to_path_buf());
 			it.skip_current_dir();
 		}
 	}

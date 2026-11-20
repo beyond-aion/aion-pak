@@ -248,7 +248,7 @@ pub fn overrides(client: &Path, progress: &Progress) -> Result<Vec<Override>> {
 
 /// One line for a warning: which archive hides how many files of which.
 pub fn override_text(client: &Path, o: &Override) -> String {
-	let rel = |p: &Path| p.strip_prefix(client).unwrap_or(p).display().to_string();
+	let rel = |p: &Path| p.trim_prefix(client).display().to_string();
 	format!(
 		"{}: {} file(s) never loaded, {} (opened later) has other copies, e.g. {}",
 		rel(&o.hidden),
@@ -369,7 +369,7 @@ pub fn plan(
 			break;
 		}
 	}
-	let rel = |p: &PathBuf| p.strip_prefix(client).unwrap_or(p).to_path_buf();
+	let rel = |p: &PathBuf| p.trim_prefix(client).to_path_buf();
 	Ok(Plan {
 		root: rel(&root.to_path_buf()),
 		merged: order
@@ -750,7 +750,7 @@ pub fn optimize(
 	for (p, e) in &undecodable {
 		progress.warn(format!(
 			"{}: does not decode ({e}), likely encrypted for this client; left in place",
-			p.strip_prefix(client).unwrap_or(p).display()
+			p.trim_prefix(client).display()
 		));
 	}
 	let fixed: HashSet<PathBuf> = undecodable.into_iter().map(|(p, _)| p).collect();
@@ -860,7 +860,7 @@ pub fn optimize(
 			)));
 		}
 		for v in &volumes {
-			writeln!(list, "volume\t{}", v.strip_prefix(out).unwrap_or(v).display())?;
+			writeln!(list, "volume\t{}", v.trim_prefix(out).display())?;
 		}
 		if let Some(backup) = apply {
 			for rel in &plan.merged {
@@ -886,7 +886,7 @@ pub fn optimize(
 			return Err(Error::Cancelled);
 		}
 		let reader = readers.remove(&path).unwrap();
-		let rel = path.strip_prefix(client).unwrap_or(&path).to_path_buf();
+		let rel = path.trim_prefix(client).to_path_buf();
 		progress.set_current(rel.display().to_string());
 		if let Some((before, after)) = recompress(client, &rel, reader, out, apply, opts, progress, &mut list)? {
 			outcome.recompressed.push(rel);

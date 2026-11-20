@@ -396,7 +396,7 @@ fn plan(dir: &Path, manifest: Option<&Manifest>, label: &str, progress: &Progres
 	let mut extra: Vec<_> = on_disk.into_iter().collect();
 	extra.sort();
 	for (path, size) in extra {
-		let rel = path.strip_prefix(dir).unwrap_or(&path);
+		let rel = path.trim_prefix(dir);
 		items.push(Item {
 			name: names::path_name(rel)?,
 			path: Some(path),
@@ -682,7 +682,7 @@ pub fn convert(input: &Path, out: Option<&Path>, mode: Convert, progress: &Progr
 	files.par_iter().for_each(|path| {
 		let target = match out {
 			None => path.clone(),
-			Some(dir) if input.is_dir() => dir.join(path.strip_prefix(input).unwrap_or(path)),
+			Some(dir) if input.is_dir() => dir.join(path.trim_prefix(input)),
 			Some(file) => file.to_path_buf(),
 		};
 		let name = path

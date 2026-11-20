@@ -125,7 +125,7 @@ fn declares_utf16(data: &[u8]) -> bool {
 
 /// UTF-8 text without its byte order mark.
 fn utf8_text(data: &[u8]) -> Result<&str> {
-	let data = data.strip_prefix(b"\xef\xbb\xbf").unwrap_or(data);
+	let data = data.trim_prefix(b"\xef\xbb\xbf");
 	match std::str::from_utf8(data) {
 		Ok(s) => Ok(s),
 		Err(_) => xml_err("text is neither UTF-16 nor UTF-8; 8-bit code pages are not supported"),
@@ -213,7 +213,7 @@ pub fn declared(s: &str) -> Declared {
 
 /// Makes the XML declaration name `encoding`, adding the attribute or a whole declaration if needed.
 fn set_declared_encoding(s: &str, encoding: &str) -> String {
-	let s = s.strip_prefix('\u{feff}').unwrap_or(s);
+	let s = s.trim_prefix('\u{feff}');
 	match split_decl(s) {
 		Some((lead, decl, rest)) => match encoding_value(decl) {
 			Some((a, b)) => format!("{lead}{}{encoding}{}{rest}", &decl[..a], &decl[b..]),
@@ -229,7 +229,7 @@ fn unset_declared_encoding(s: &str, encoding: &str, original: &Declared) -> Stri
 		Declared::Named(v) => set_declared_encoding(s, v),
 		Declared::Missing => {
 			let added = format!("{ADDED_DECL_HEAD}{encoding}{ADDED_DECL_TAIL}");
-			s.strip_prefix(added.as_str()).unwrap_or(s).to_owned()
+			s.trim_prefix(added.as_str()).to_owned()
 		}
 		Declared::Unnamed => {
 			let added = format!(" encoding=\"{encoding}\"");
@@ -250,7 +250,7 @@ pub fn client_text(data: &[u8]) -> Result<(Vec<u8>, bool)> {
 	if utf16_bom(data).is_some() {
 		return Ok((data.to_vec(), false));
 	}
-	let body = data.strip_prefix(b"\xef\xbb\xbf").unwrap_or(data);
+	let body = data.trim_prefix(b"\xef\xbb\xbf");
 	if body.is_ascii() {
 		return Ok((data.to_vec(), false));
 	}

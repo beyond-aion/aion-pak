@@ -879,7 +879,7 @@ impl Shell {
 				ui.style_mut().interaction.selectable_labels = false;
 				let hint = if self.rail_open { "Fold the sidebar" } else { "Unfold the sidebar" };
 				if menu_button(ui, &pal).on_hover_text(hint).clicked() {
-					self.rail_open = !self.rail_open;
+					self.rail_open.toggle();
 				}
 				ui.add_space(8.0);
 				let glow = self.working_glow(ui.ctx());
@@ -992,7 +992,7 @@ impl Shell {
 						let errors = self.log.iter().filter(|line| line.error).count();
 						let hint = if self.log_open { "Hide the log" } else { "Everything that happened, with the time it happened at" };
 						if log_button(ui, &pal, self.log_open, errors).on_hover_text(hint).clicked() {
-							self.log_open = !self.log_open;
+							self.log_open.toggle();
 						}
 					});
 				});

@@ -685,7 +685,7 @@ fn inside(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
 		let (xi, yi) = poly[i];
 		let (xj, yj) = poly[j];
 		if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-			result = !result;
+			result.toggle();
 		}
 		j = i;
 	}
