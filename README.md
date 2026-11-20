@@ -13,6 +13,10 @@
 
 </div>
 
+Aion Pak is a `.pak` unpacker and repacker for the Aion client, in place of pak2zip and AION Encdec. It unpacks
+the archives, decrypts and decodes the client's encrypted and compiled XML and HTML into plain text, and packs
+your changes back. Tested with 4.6, 4.8 and 4.9 clients.
+
 ## What you can do with it
 
 - **Look inside** any client archive: names, sizes, how each XML file is stored, and a preview of text, XML,
