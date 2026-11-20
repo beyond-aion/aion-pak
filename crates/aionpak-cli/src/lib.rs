@@ -27,6 +27,10 @@ Typical work:
     aionpak repack tree -o <client>              only the <name>.pak/ folders are packed back
     aionpak compare <client-copy> <client>       what changed, archive by archive
 
+  Find where something is, without extracting:
+    aionpak search <client> -F -i Kaisinel --include \"*.xml\"
+    (prints archive:file:line: text for every line that has it; drop -F for a regular expression)
+
   Every <name>.pak/ folder holds .aionpak, the manifest that lets pack rebuild the archive: keep it.
   XML is compiled and HTML stored as text, the forms the client loads fastest; --xml original --html original
   puts every file back in the form it had. Keep a copy of the client before writing into it.";
@@ -173,6 +177,7 @@ Examples:
   aionpak search <client>/Data 'npc_id=\"20[0-9]{4}\"' --include \"*.xml\"
   aionpak search Data/Items/Items.pak -F -i \"Kaisinel\"")]
 	Search {
+		/// An archive, or a folder to search every archive under it
 		input: PathBuf,
 		/// A regular expression (Rust regex syntax), or plain text with -F
 		pattern: String,
