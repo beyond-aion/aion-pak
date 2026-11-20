@@ -23,6 +23,7 @@ pub enum JobKind {
 	Pak,
 	Compare,
 	Optimize,
+	Search,
 }
 
 pub enum JobEvent {
@@ -382,6 +383,64 @@ pub fn compare(first: PathBuf, second: PathBuf, slot: crate::compare_view::Slot)
 		};
 		*slot.lock().unwrap() = Some(report);
 		Ok(summary)
+	})
+}
+
+/// Searches an archive, or every archive under a folder, and hands the hits to the view archive by archive.
+pub fn search(
+	source: PathBuf,
+	query: aionpak_commons::search::Query,
+	names: Vec<String>,
+	slot: crate::search_view::Slot,
+) -> Job {
+	use aionpak_commons::search;
+	let title = format!("searching {}", source.display());
+	let base = source.is_dir().then(|| source.clone());
+	spawn(JobKind::Search, title, base, move |progress| {
+		let filter = |name: &str| {
+			let name = name.to_lowercase().replace('\\', "/");
+			names.iter().any(|query| crate::browse::matches(query, &name))
+		};
+		let filter = (!names.is_empty()).then_some(&filter as &ops::NameFilter);
+		let found = |archive: PathBuf, label: &str, mut hits: Vec<search::Hit>| {
+			let mut slot = slot.lock().unwrap();
+			let room = crate::search_view::MAX_LINES.saturating_sub(slot.lines);
+			if hits.len() > room {
+				hits.truncate(room);
+				slot.capped = true;
+				progress.cancel();
+			}
+			slot.lines += hits.len();
+			slot.files += hits.chunk_by(|a, b| a.entry == b.entry).count();
+			slot.groups.push(crate::search_view::Group { archive, label: label.to_owned(), hits });
+		};
+		if source.is_dir() {
+			let paks = tree::find_paks(&source).map_err(|e| e.to_string())?;
+			search::archives(&source, &paks, &query, filter, &progress, &mut |label, hits| {
+				found(source.join(label), label, hits)
+			});
+		} else {
+			let reader = PakReader::open(&source).map_err(|e| format!("{}: {e}", source.display()))?;
+			let (files, bytes) = ops::totals(&reader, filter);
+			progress.add_total(files, bytes);
+			progress.archives_total.store(1, Relaxed);
+			let label = source.file_name().map_or_else(|| source.display().to_string(), |n| n.to_string_lossy().into_owned());
+			let hits = search::archive(&reader, &label, &query, filter, &progress);
+			if !hits.is_empty() {
+				found(source.clone(), &label, hits);
+			}
+			progress.archives_done.store(1, Relaxed);
+		}
+		let slot = slot.lock().unwrap();
+		Ok(if slot.capped {
+			format!("stopped at {} lines in {} files", slot.lines, slot.files)
+		} else if progress.cancelled() {
+			"cancelled".to_owned()
+		} else if slot.lines == 0 {
+			"nothing found".to_owned()
+		} else {
+			format!("{} lines in {} files", slot.lines, slot.files)
+		})
 	})
 }
 

@@ -9,6 +9,7 @@ use crate::icons::{self, Glyph};
 use crate::jobs::{self, Job, JobEvent, JobKind};
 use crate::open;
 use crate::preview;
+use crate::search_view;
 use crate::settings::Settings;
 use crate::theme::{self, Accent, Density, Palette, Theme};
 use crate::units::{human_bytes, human_time};
@@ -36,6 +37,7 @@ const FOLDED_PANE: f32 = 32.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
 	Browse,
+	Search,
 	Pak,
 	Convert,
 	Verify,
@@ -48,8 +50,9 @@ enum Section {
 
 impl Section {
 	/// The work screens, at the top of the rail.
-	const MAIN: [Section; 6] = [
+	const MAIN: [Section; 7] = [
 		Section::Browse,
+		Section::Search,
 		Section::Pak,
 		Section::Convert,
 		Section::Verify,
@@ -62,6 +65,7 @@ impl Section {
 	fn title(self) -> &'static str {
 		match self {
 			Section::Browse => "Browse",
+			Section::Search => "Search",
 			Section::Pak => "Pack",
 			Section::Convert => "Convert",
 			Section::Verify => "Verify",
@@ -76,6 +80,7 @@ impl Section {
 	fn glyph(self) -> Glyph {
 		match self {
 			Section::Browse => Glyph::Browse,
+			Section::Search => Glyph::Search,
 			Section::Pak => Glyph::Pack,
 			Section::Convert => Glyph::Convert,
 			Section::Verify => Glyph::Verify,
@@ -89,6 +94,7 @@ impl Section {
 
 	fn blurb(self) -> &'static str {
 		match self {
+			Section::Search => "Find text inside the files of an archive, or of every archive of a client, without extracting them.",
 			Section::Pak => "Build an archive from a folder. Files you did not change keep their compressed data, so it is quick.",
 			Section::Convert => "Turn loose XML and HTML files into readable text, or back into a form the client reads.",
 			Section::Verify => "Make sure every file in an archive reads back intact, the way the client reads it.",
@@ -207,6 +213,8 @@ enum LineEvent {
 }
 
 const LOG_LIMIT: usize = 20_000;
+/// Temp data key of the line Search asks the text preview to scroll to.
+const GOTO_LINE: &str = "search-goto-line";
 
 pub struct Shell {
 	/// A move or resize of the window was handed to the system: the button is released while the system holds the
@@ -257,6 +265,10 @@ pub struct Shell {
 	job_lines_cleared: bool,
 	verify_report: Vec<LogLine>,
 	compare_view: compare_view::CompareView,
+	search_form: forms::SearchForm,
+	search_view: search_view::SearchView,
+	/// An entry to show once the archive being opened for it has loaded: the archive and the entry's name.
+	pending_reveal: Option<(PathBuf, String)>,
 	extract_bar: forms::ExtractBar,
 	pak_form: forms::PakForm,
 	convert_form: forms::ConvertForm,
@@ -307,6 +319,9 @@ impl Shell {
 			job_lines_cleared: false,
 			verify_report: Vec::new(),
 			compare_view: compare_view::CompareView::default(),
+			search_form: forms::SearchForm::default(),
+			search_view: search_view::SearchView::default(),
+			pending_reveal: None,
 			pak_form: forms::PakForm::default(),
 			convert_form: forms::ConvertForm::default(),
 			compare_form: forms::CompareForm::default(),
@@ -711,6 +726,12 @@ impl Shell {
 					let opened = archive.path.clone();
 					self.archive = Some(archive);
 					self.refilter();
+					if let Some((path, entry)) = self.pending_reveal.take()
+						&& path == opened
+						&& let Some(index) = self.archive.as_ref().and_then(|a| a.rows.iter().position(|row| row.name == entry))
+					{
+						self.reveal_entry(index);
+					}
 					self.log_line(false, format!("opened {}", opened.display()));
 					// An archive opened from a folder belongs to that folder; one opened on its own goes to the list.
 					if self.folder.is_none() {
@@ -2074,20 +2095,85 @@ impl Shell {
 				}
 			})
 			.inner;
-		if let Some(index) = jump
-			&& let Some(parent) = self.archive.as_ref().map(|archive| browse::parent_key(&archive.rows[index]))
-		{
-			// Show the entry in its folder, whatever filter or folder Browse was on.
-			self.filter.clear();
-			self.set_folder(parent);
-			if let Some(position) = self.items.iter().position(|item| matches!(item, Item::Entry(i) if *i == index)) {
-				self.pick_row(Pick {
-					index: position,
-					ctrl: false,
-					shift: false,
-				});
+		if let Some(index) = jump {
+			self.reveal_entry(index);
+		}
+	}
+
+	/// Shows entry `index` of the open archive in its folder in Browse, whatever filter or folder Browse was on.
+	fn reveal_entry(&mut self, index: usize) {
+		let Some(parent) = self.archive.as_ref().map(|archive| browse::parent_key(&archive.rows[index])) else {
+			return;
+		};
+		self.filter.clear();
+		self.set_folder(parent);
+		if let Some(position) = self.items.iter().position(|item| matches!(item, Item::Entry(i) if *i == index)) {
+			self.pick_row(Pick {
+				index: position,
+				ctrl: false,
+				shift: false,
+			});
+		}
+		self.section = Section::Browse;
+	}
+
+	/// Shows the entry named `entry` of `archive` in Browse, opening the archive first when another one is open.
+	fn reveal(&mut self, ctx: &egui::Context, archive: PathBuf, entry: String) {
+		let open = self.archive.as_ref().is_some_and(|open| open.path == archive);
+		if open {
+			self.pending_reveal = None;
+			if let Some(index) = self.archive.as_ref().and_then(|open| open.rows.iter().position(|row| row.name == entry)) {
+				self.reveal_entry(index);
 			}
-			self.section = Section::Browse;
+		} else {
+			self.pending_reveal = Some((archive.clone(), entry));
+			self.open(ctx, archive);
+		}
+	}
+
+	fn search_ui(&mut self, ui: &mut egui::Ui) {
+		self.screen_header(ui, Section::Search);
+		let open = self.open_in_browse();
+		self.search_form.follow_open(open.as_deref());
+		let pal = theme::pal(ui.ctx());
+		let busy = self.busy();
+		let run = ui
+			.scope(|ui| {
+				ui.set_max_width(ui.available_width().min(820.0));
+				self.search_form.ui(ui, &pal, busy)
+			})
+			.inner;
+		if run
+			&& let Some(source) = self.search_form.source.clone()
+			&& let Ok(query) = self.search_form.query()
+		{
+			self.search_view.clear();
+			self.search_form.pin();
+			let names = self.search_form.name_filters();
+			self.start_job(jobs::search(source, query, names, self.search_view.slot.clone()));
+		}
+		ui.add_space(14.0);
+		let running = self.job.as_ref().is_some_and(|job| job.kind == JobKind::Search && !job.finished);
+		if let Some(open) = self.search_view.ui(ui, &pal, running) {
+			let goto_id = egui::Id::unique(GOTO_LINE);
+			let goto = open.line.map(|line| (open.archive.clone(), open.entry.clone(), line));
+			ui.data_mut(|d| match goto {
+				Some(goto) => {
+					d.insert_temp(goto_id, goto);
+				}
+				None => {
+					d.remove::<(PathBuf, String, usize)>(goto_id);
+				}
+			});
+			self.detail_tab = DetailTab::Preview;
+			self.reveal(ui.ctx(), open.archive, open.entry);
+		}
+		let finished = self.job.as_ref().filter(|job| job.kind == JobKind::Search && job.finished);
+		if let Some(job) = finished
+			&& !job.failed
+			&& job.summary == "nothing found"
+		{
+			ui.label(RichText::new("Nothing found.").size(13.0).color(pal.text_dim));
 		}
 	}
 
@@ -2277,6 +2363,7 @@ impl eframe::App for Shell {
 			)
 			.show(ui, |ui| match self.section {
 				Section::Browse => self.workspace_ui(ui),
+				Section::Search => self.search_ui(ui),
 				Section::Pak => self.pak_ui(ui),
 				Section::Convert => self.convert_ui(ui),
 				Section::Verify => self.verify_ui(ui),
@@ -2989,7 +3076,7 @@ fn elide(ui: &egui::Ui, text: &str, width: f32, font: FontId) -> String {
 }
 
 /// What the window does, for the Help section.
-const WINDOW_HELP: [(&str, &str); 9] = [
+const WINDOW_HELP: [(&str, &str); 10] = [
 	(
 		"Browse",
 		"Open a .pak, or a client folder to see its directories and archives; double-click an archive to look \
@@ -2998,6 +3085,13 @@ const WINDOW_HELP: [(&str, &str); 9] = [
 		 The preview pane, beside the table or under it in a narrow window, shows the selected file (picture, \
 		 text, sound, model or font) with its details and first bytes; closed, it leaves a strip that opens it \
 		 again.",
+	),
+	(
+		"Search",
+		"Finds text inside the files of an archive, or of every archive under a folder, without extracting them. \
+		 Compiled, encrypted and UTF-16 XML and HTML are searched as readable text. Text finds the words as \
+		 typed; Regex takes a regular expression. In files narrows the search by name, as the Browse filter \
+		 does, which makes it much faster. Click a file or a line to open the file in Browse.",
 	),
 	(
 		"Pack",
@@ -3068,7 +3162,7 @@ struct CliHelp {
 	example: &'static str,
 }
 
-const CLI_HELP: [CliHelp; 9] = [
+const CLI_HELP: [CliHelp; 10] = [
 	CliHelp {
 		name: "list <pak>",
 		summary: "Lists the entries of an archive: size, stored size, method and name.",
@@ -3132,6 +3226,16 @@ const CLI_HELP: [CliHelp; 9] = [
 			("-o <out>", "write here instead of over the input"),
 		],
 		example: "aionpak encode skills_text -o Data/skills --xml compiled",
+	},
+	CliHelp {
+		name: "search <pak|folder> <pattern>",
+		summary: "Prints every line that matches, as archive:file:line: text; XML and HTML are searched decoded.",
+		options: &[
+			("-F", "plain text instead of a regular expression"),
+			("-i", "ignore case"),
+			("--include <glob>", "only files whose name matches, e.g. \"*.xml\""),
+		],
+		example: "aionpak search Data -F -i Kaisinel --include \"*.xml\"",
 	},
 	CliHelp {
 		name: "verify <pak|folder>",
@@ -3683,7 +3787,18 @@ fn details(
 
 	match tab {
 		DetailTab::Preview => match preview {
-			Some(preview) => preview::show(ui, preview),
+			Some(preview) => {
+				// A line picked in Search: scroll to it once the text of that very entry shows.
+				let goto_id = egui::Id::unique(GOTO_LINE);
+				let goto = ui
+					.data(|d| d.get_temp::<(PathBuf, String, usize)>(goto_id))
+					.filter(|(path, name, _)| *path == archive.path && *name == entry.name);
+				let text = matches!(preview.kind, preview::Kind::Text { .. });
+				preview::show(ui, preview, goto.as_ref().filter(|_| text).map(|(_, _, line)| *line));
+				if goto.is_some() {
+					ui.data_mut(|d| d.remove::<(PathBuf, String, usize)>(goto_id));
+				}
+			}
 			None => {
 				ui.label(theme::note(&pal, "No preview for this entry."));
 			}

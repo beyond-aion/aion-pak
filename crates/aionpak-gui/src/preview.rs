@@ -459,7 +459,8 @@ fn decode_dds(data: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
 	Some((pixels, width, height))
 }
 
-pub fn show(ui: &mut egui::Ui, preview: &Preview) {
+/// `goto` scrolls a text preview to that line, from 1; it is meant for one frame.
+pub fn show(ui: &mut egui::Ui, preview: &Preview, goto: Option<usize>) {
 	let pal = crate::theme::pal(ui.ctx());
 	match &preview.kind {
 		Kind::Image { texture, note } => {
@@ -480,7 +481,7 @@ pub fn show(ui: &mut egui::Ui, preview: &Preview) {
 			ui.label(crate::theme::mono(note).color(pal.muted()));
 		}
 		Kind::Text { text, truncated, note } => {
-			code_block(ui, text, 210.0);
+			code_block(ui, text, 210.0, goto);
 			let line = if *truncated {
 				format!("{note} — showing the beginning")
 			} else {
@@ -489,7 +490,7 @@ pub fn show(ui: &mut egui::Ui, preview: &Preview) {
 			ui.label(crate::theme::mono(line).color(pal.muted()));
 		}
 		Kind::Hex { note } => {
-			code_block(ui, &hex_dump(&preview.hex), 190.0);
+			code_block(ui, &hex_dump(&preview.hex), 190.0, None);
 			ui.label(crate::theme::mono(format!("{note} — first {} bytes", preview.hex.len())).color(pal.muted()));
 		}
 		Kind::Font { family, note } => {
@@ -653,12 +654,13 @@ fn sound(ui: &mut egui::Ui, clip: &Clip, pal: &crate::theme::Palette) {
 /// The Hex tab: the first bytes of any entry, whatever the file is.
 pub fn show_hex(ui: &mut egui::Ui, preview: &Preview) {
 	let pal = crate::theme::pal(ui.ctx());
-	code_block(ui, &hex_dump(&preview.hex), 280.0);
+	code_block(ui, &hex_dump(&preview.hex), 280.0, None);
 	ui.label(crate::theme::mono(format!("first {} bytes of the entry", preview.hex.len())).color(pal.muted()));
 }
 
-fn code_block(ui: &mut egui::Ui, text: &str, height: f32) {
+fn code_block(ui: &mut egui::Ui, text: &str, height: f32, goto: Option<usize>) {
 	let pal = crate::theme::pal(ui.ctx());
+
 	egui::Frame::new()
 		.fill(pal.bg)
 		.stroke(egui::Stroke::new(1.0, pal.border))
@@ -670,7 +672,16 @@ fn code_block(ui: &mut egui::Ui, text: &str, height: f32) {
 				.max_height(height.min(ui.available_height()).max(60.0))
 				.auto_shrink([false, false])
 				.show(ui, |ui| {
-					ui.add(egui::Label::new(RichText::new(text).monospace().size(11.0).color(pal.text_dim)).extend());
+					let label = ui.add(egui::Label::new(RichText::new(text).monospace().size(11.0).color(pal.text_dim)).extend());
+					// The label does not wrap, so its height splits evenly into its lines. A few lines above the one
+					// asked for stay in view, so it does not sit on the edge.
+					if let Some(line) = goto {
+						let rows = text.lines().count().max(1);
+						let row = label.rect.height() / rows as f32;
+						let top = label.rect.top() + row * line.saturating_sub(4) as f32;
+						let target = Rect::from_min_size(egui::pos2(label.rect.left(), top), Vec2::new(1.0, row));
+						ui.scroll_to_rect(target, Some(egui::Align::TOP));
+					}
 				});
 		});
 }

@@ -945,6 +945,121 @@ impl VerifyForm {
 	}
 }
 
+/// What to look for and where: the text or pattern, how to take it, and which files to read.
+pub struct SearchForm {
+	pub source: Option<PathBuf>,
+	pub pattern: String,
+	pub regex: bool,
+	pub match_case: bool,
+	/// Names to search, as in the Browse filter; several are separated by commas. Empty searches every file.
+	pub names: String,
+	follow: FollowOpen,
+	/// The pattern last checked and what was wrong with it, so a bad regex is named as it is typed.
+	checked: Option<(String, bool, Option<String>)>,
+}
+
+impl Default for SearchForm {
+	fn default() -> Self {
+		SearchForm {
+			source: None,
+			pattern: String::new(),
+			regex: false,
+			match_case: false,
+			names: String::new(),
+			follow: FollowOpen::default(),
+			checked: None,
+		}
+	}
+}
+
+impl SearchForm {
+	/// The archive open in Browse, else the folder being browsed, goes in as where to search.
+	pub fn follow_open(&mut self, open: Option<&Path>) {
+		self.follow.apply(&mut self.source, open, |_| true);
+	}
+
+	/// Keeps the place searched from now on: a click on a hit opens its archive in Browse, and the field must not
+	/// follow it there.
+	pub fn pin(&mut self) {
+		self.follow.offered = None;
+	}
+
+	pub fn query(&self) -> Result<aionpak_commons::search::Query, String> {
+		aionpak_commons::search::Query::new(&self.pattern, !self.regex, !self.match_case).map_err(|e| e.to_string())
+	}
+
+	/// The name filters, lower case, as `browse::matches` takes them.
+	pub fn name_filters(&self) -> Vec<String> {
+		self.names
+			.split(',')
+			.map(|part| part.trim().to_lowercase().replace('\\', "/"))
+			.filter(|part| !part.is_empty())
+			.collect()
+	}
+
+	fn error(&mut self) -> Option<String> {
+		if !self.regex || self.pattern.is_empty() {
+			return None;
+		}
+		let key = (self.pattern.clone(), self.match_case);
+		if self.checked.as_ref().is_none_or(|(pattern, case, _)| (pattern, case) != (&key.0, &key.1)) {
+			let error = self.query().err();
+			self.checked = Some((key.0, key.1, error));
+		}
+		self.checked.as_ref().and_then(|(_, _, error)| error.clone())
+	}
+
+	/// The form; true when the search should start, by the button or Enter in the text field.
+	pub fn ui(&mut self, ui: &mut egui::Ui, pal: &Palette, busy: bool) -> bool {
+		let mut enter = false;
+		section(ui, pal, "What to find", |ui| {
+			path_row(
+				ui,
+				pal,
+				"Search in",
+				&mut self.source,
+				Pick::Either,
+				"an archive, or a folder to search every archive under it",
+			);
+			ui.horizontal(|ui| {
+				field_label(ui, pal, "Find");
+				let edit = egui::TextEdit::singleline(&mut self.pattern)
+					.hint_text(if self.regex { r#"npc_id="20\d{4}""# } else { "text to find" })
+					.font(egui::TextStyle::Monospace)
+					.desired_width((ui.available_width() - 250.0).clamp(160.0, 520.0))
+					.margin(egui::Margin::symmetric(8, 5));
+				let response = ui.add(edit);
+				enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+				theme::segmented(ui, &mut self.regex, &[(false, "Text"), (true, "Regex")]);
+				ui.checkbox(&mut self.match_case, "Match case");
+			});
+			ui.horizontal(|ui| {
+				field_label(ui, pal, "In files")
+					.on_hover_text("As in the Browse filter: npc finds names that contain it, *.xml takes the XML files");
+				let edit = egui::TextEdit::singleline(&mut self.names)
+					.hint_text("all files; or *.xml, items/*, npc")
+					.font(egui::TextStyle::Monospace)
+					.desired_width((ui.available_width()).clamp(160.0, 520.0))
+					.margin(egui::Margin::symmetric(8, 5));
+				let response = ui.add(edit);
+				enter |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+			});
+			if let Some(error) = self.error() {
+				ui.label(RichText::new(error).font(egui::FontId::monospace(12.0)).color(pal.error));
+			} else {
+				ui.label(theme::note(
+					pal,
+					"Compiled, encrypted and UTF-16 XML and HTML are searched as readable text; textures, sounds and \
+					 other binary files are skipped.",
+				));
+			}
+		});
+		let ready = self.source.is_some() && !self.pattern.is_empty() && self.error().is_none();
+		let clicked = run_button(ui, pal, busy, ready, "Search", "Choose where to search and type what to find");
+		clicked || (enter && ready && !busy)
+	}
+}
+
 #[cfg(test)]
 mod follow_tests {
 	use super::FollowOpen;

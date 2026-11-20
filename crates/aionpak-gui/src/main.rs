@@ -14,6 +14,7 @@ mod jobs;
 mod model;
 mod open;
 mod preview;
+mod search_view;
 mod settings;
 mod theme;
 mod units;

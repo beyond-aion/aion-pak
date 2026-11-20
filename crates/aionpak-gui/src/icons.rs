@@ -6,6 +6,7 @@ use egui::{Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Glyph {
 	Browse,
+	Search,
 	Pack,
 	Convert,
 	Verify,
@@ -52,6 +53,11 @@ pub fn glyph(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32) {
 			path(painter, r, &[(0.70, 0.14), (0.88, 0.32), (0.70, 0.50)], stroke);
 			path(painter, r, &[(0.92, 0.70), (0.12, 0.70)], stroke);
 			path(painter, r, &[(0.30, 0.52), (0.12, 0.70), (0.30, 0.88)], stroke);
+		}
+		Glyph::Search => {
+			// A magnifying glass.
+			painter.circle_stroke(at(r, 0.42, 0.42), r.width() * 0.32, stroke);
+			path(painter, r, &[(0.66, 0.66), (0.94, 0.94)], stroke);
 		}
 		Glyph::Verify => {
 			// A shield with a tick.

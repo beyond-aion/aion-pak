@@ -23,6 +23,8 @@ Tested with 4.6, 4.8 and 4.9 clients.
 
 - **Browse** an archive and preview its text, XML, textures, sounds, 3D models and fonts.
 - **Extract** one archive or the whole client, with XML and HTML as readable text.
+- **Search** the text of every file of an archive or of the whole client, compiled XML included, without
+  extracting anything.
 - **Pack your changes back.** Files you did not touch are copied as they were, so the game sees the same
   archive apart from your edits.
 - **Check and compare** archives, or two whole clients.
