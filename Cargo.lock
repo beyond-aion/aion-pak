@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "aionpak-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aionpak-commons",
  "anyhow",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "aionpak-commons"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "crc32fast",
  "encoding_rs",
@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "aionpak-gui"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aionpak-cli",
  "aionpak-commons",

@@ -12,8 +12,8 @@ name = "aionpak"
 path = "src/main.rs"
 
 [dependencies]
-aionpak-commons = { version = "1.0.0", path = "../aionpak-commons" }
-aionpak-cli = { version = "1.0.0", path = "../aionpak-cli" }
+aionpak-commons = { version = "1.1.0", path = "../aionpak-commons" }
+aionpak-cli = { version = "1.1.0", path = "../aionpak-cli" }
 # OpenGL only: the default wgpu renderer roughly doubles the size of the program for no gain here.
 eframe = { version = "0.37.0", default-features = false, features = [
 	"clipboard",
