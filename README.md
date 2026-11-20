@@ -62,7 +62,7 @@ aionpak extract Data/skills/skills.pak -o skills -d     # unpack, XML as text
 aionpak pack    skills -o Data/skills/skills.pak        # pack it back
 ```
 
-The commands are `list`, `extract`, `pack`, `repack`, `decode`, `encode`, `verify`, `compare` and `optimize`;
+The commands are `list`, `extract`, `pack`, `repack`, `decode`, `encode`, `search`, `verify`, `compare` and `optimize`;
 `aionpak <command> --help` explains each with an example. For servers and scripts, Releases also carry
 `aionpak-cli`, the same without the window.
 

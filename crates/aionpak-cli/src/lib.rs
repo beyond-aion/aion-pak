@@ -8,7 +8,7 @@ use aionpak_commons::{names, optimize, tree};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use glob::{MatchOptions, Pattern};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -164,6 +164,28 @@ Examples:
 	/// Read every entry and check its CRC, as the client does
 	#[command(after_help = "Example: aionpak verify <client>")]
 	Verify { input: PathBuf },
+	/// Find text inside the files of an archive, or of every archive under a folder
+	#[command(after_help = "\
+Compiled, encrypted and UTF-16 XML and HTML are searched as the text a decoded extraction shows; binary files
+are skipped. Each matching line is printed as <archive>:<entry>:<line>: <text>.
+
+Examples:
+  aionpak search <client>/Data 'npc_id=\"20[0-9]{4}\"' --include \"*.xml\"
+  aionpak search Data/Items/Items.pak -F -i \"Kaisinel\"")]
+	Search {
+		input: PathBuf,
+		/// A regular expression (Rust regex syntax), or plain text with -F
+		pattern: String,
+		/// Take the pattern as plain text
+		#[arg(short = 'F', long)]
+		fixed_strings: bool,
+		/// Ignore case
+		#[arg(short, long)]
+		ignore_case: bool,
+		/// Only entries whose name inside the archive matches one of these globs (any case, `{a,b}` alternatives)
+		#[arg(long, value_name = "GLOB")]
+		include: Vec<String>,
+	},
 	/// Check that two archives, or two folders of archives, hold the same files
 	#[command(after_help = "\
 Compares names, order, sizes and CRCs from the archive directories; run verify as well to check the data
@@ -427,7 +449,9 @@ pub fn main_with_args(args: Vec<std::ffi::OsString>) -> ExitCode {
 	}
 	let progress = std::sync::Arc::new(Progress::default());
 	let started = std::time::Instant::now();
-	let display = report::Display::start(&progress, cli.common.quiet);
+	// Hits printed to a terminal would be torn by the progress bar redrawing under them.
+	let hits_on_terminal = matches!(cli.command, Command::Search { .. }) && io::stdout().is_terminal();
+	let display = report::Display::start(&progress, cli.common.quiet || hits_on_terminal);
 	let compare = matches!(cli.command, Command::Compare { .. });
 	let result = run(&cli.command, &progress);
 	display.finish();
@@ -492,15 +516,8 @@ fn run(command: &Command, progress: &Progress) -> Result<()> {
 			include,
 			force,
 		} => {
-			let patterns = include
-				.iter()
-				.flat_map(|g| expand_braces(g))
-				.map(|g| Pattern::new(&g).with_context(|| format!("bad glob {g}")))
-				.collect::<Result<Vec<_>>>()?;
-			let match_fn = (!patterns.is_empty()).then_some(|name: &str| {
-				let name = name.replace('\\', "/");
-				patterns.iter().any(|p| p.matches_with(&name, NAME_MATCH))
-			});
+			let patterns = globs(include)?;
+			let match_fn = (!patterns.is_empty()).then_some(|name: &str| matches_any(&patterns, name));
 			let opts = ExtractOptions {
 				decode: decode.then_some(if *utf8 { Encoding::Utf8 } else { Encoding::Utf16 }),
 				filter: match_fn.as_ref().map(|f| f as &ops::NameFilter),
@@ -542,6 +559,13 @@ fn run(command: &Command, progress: &Progress) -> Result<()> {
 			Ok(())
 		}
 		Command::Verify { input } => verify(input, progress),
+		Command::Search {
+			input,
+			pattern,
+			fixed_strings,
+			ignore_case,
+			include,
+		} => search(input, pattern, *fixed_strings, *ignore_case, include, progress),
 		Command::Compare { first, second } => {
 			let tree = !(first.is_file() && second.is_file());
 			for d in aionpak_commons::compare::trees(first, second)?.lines(tree) {
@@ -643,6 +667,67 @@ fn list(path: &Path) -> Result<()> {
 	writeln!(out, "{files} entries, {bytes} bytes, {:?} signatures", pak.flavor())?;
 	out.flush()?;
 	Ok(())
+}
+
+fn globs(include: &[String]) -> Result<Vec<Pattern>> {
+	include
+		.iter()
+		.flat_map(|g| expand_braces(g))
+		.map(|g| Pattern::new(&g).with_context(|| format!("bad glob {g}")))
+		.collect()
+}
+
+fn matches_any(patterns: &[Pattern], name: &str) -> bool {
+	let name = name.replace('\\', "/");
+	patterns.iter().any(|p| p.matches_with(&name, NAME_MATCH))
+}
+
+fn search(
+	input: &Path,
+	pattern: &str,
+	literal: bool,
+	ignore_case: bool,
+	include: &[String],
+	progress: &Progress,
+) -> Result<()> {
+	use aionpak_commons::search;
+	let query = search::Query::new(pattern, literal, ignore_case)?;
+	let patterns = globs(include)?;
+	let match_fn = (!patterns.is_empty()).then_some(|name: &str| matches_any(&patterns, name));
+	let filter = match_fn.as_ref().map(|f| f as &ops::NameFilter);
+	let stdout = io::stdout();
+	let mut out = io::BufWriter::new(stdout.lock());
+	let mut failed = None;
+	let mut print = |archive: &str, hits: Vec<search::Hit>| {
+		for hit in hits {
+			if failed.is_none()
+				&& let Err(err) = writeln!(out, "{archive}:{}:{}: {}", hit.entry, hit.line, hit.text)
+			{
+				failed = Some(err);
+				progress.cancel();
+			}
+		}
+	};
+	if input.is_dir() {
+		let paks = tree::find_paks(input)?;
+		search::archives(input, &paks, &query, filter, progress, &mut print);
+	} else {
+		let pak = PakReader::open(input).with_context(|| input.display().to_string())?;
+		let (files, bytes) = ops::totals(&pak, filter);
+		progress.add_total(files, bytes);
+		progress.archives_total.store(1, std::sync::atomic::Ordering::Relaxed);
+		let label = input.display().to_string();
+		let hits = search::archive(&pak, &label, &query, filter, progress);
+		print(&label, hits);
+		progress.archives_done.store(1, std::sync::atomic::Ordering::Relaxed);
+	}
+	drop(print);
+	match failed {
+		// `aionpak search ... | head`: the reader has what it wanted.
+		Some(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+		Some(err) => Err(err.into()),
+		None => Ok(out.flush()?),
+	}
 }
 
 fn verify(input: &Path, progress: &Progress) -> Result<()> {

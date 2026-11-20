@@ -9,6 +9,7 @@ pub mod optimize;
 pub mod ordered;
 pub mod pak;
 pub mod progress;
+pub mod search;
 pub mod tree;
 pub mod verify;
 pub mod xml;
