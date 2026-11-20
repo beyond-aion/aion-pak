@@ -25,6 +25,8 @@ pub struct Settings {
 	pub pane_open: bool,
 	pub pane_width: Option<f32>,
 	pub pane_height: Option<f32>,
+	/// The volume of the sound preview, 0 to 100.
+	pub volume: u32,
 }
 
 impl Default for Settings {
@@ -40,6 +42,7 @@ impl Default for Settings {
 			pane_open: true,
 			pane_width: None,
 			pane_height: None,
+			volume: crate::audio::DEFAULT_VOLUME,
 		}
 	}
 }
@@ -97,6 +100,11 @@ impl Settings {
 					settings.pane_width = size();
 					settings.pane_height = size();
 				}
+				"volume" => {
+					if let Ok(volume) = value.parse::<u32>() {
+						settings.volume = volume.min(100);
+					}
+				}
 				"on_start" => settings.reopen = value != "recent",
 				"last_archive" if !value.is_empty() => settings.last_archive = Some(PathBuf::from(value)),
 				"recent" if !value.is_empty() && settings.recent.len() < RECENT_LIMIT => {
@@ -135,6 +143,7 @@ impl Settings {
 		for path in &self.recent {
 			text.push_str(&format!("recent={}\n", path.display()));
 		}
+		text.push_str(&format!("volume={}\n", self.volume));
 		text.push_str(if self.reopen { "on_start=last\n" } else { "on_start=recent\n" });
 		if let Some(archive) = &self.last_archive {
 			text.push_str(&format!("last_archive={}\n", archive.display()));
@@ -181,6 +190,7 @@ mod tests {
 			pane_open: false,
 			pane_width: None,
 			pane_height: Some(260.0),
+			volume: 35,
 		};
 		settings.remember(Path::new("/a.pak"));
 		settings.remember(Path::new("/b.pak"));
@@ -194,6 +204,7 @@ mod tests {
 		assert!(!back.reopen);
 		assert!(!back.pane_open);
 		assert_eq!((back.pane_width, back.pane_height), (None, Some(260.0)));
+		assert_eq!(back.volume, 35);
 		assert_eq!(back.recent, vec![PathBuf::from("/a.pak"), PathBuf::from("/b.pak")]);
 	}
 

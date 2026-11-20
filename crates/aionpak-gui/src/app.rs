@@ -272,6 +272,7 @@ impl Shell {
 	pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings, path: Option<PathBuf>) -> Self {
 		let pane_open = settings.pane_open;
 		theme::install(&cc.egui_ctx, &settings.look, settings.density);
+		crate::audio::set_volume(settings.volume);
 		let mut shell = Shell {
 			handed_drag: false,
 			extract_bar: forms::ExtractBar::new(settings.out.clone()),
@@ -456,6 +457,15 @@ impl Shell {
 	fn remember(&mut self, path: &Path) {
 		self.settings.remember(path);
 		self.settings.save();
+	}
+
+	/// The preview's slider sets the volume; it is stored once the button is let go, not on every step of a drag.
+	fn save_volume(&mut self, ctx: &egui::Context) {
+		let volume = crate::audio::volume();
+		if volume != self.settings.volume && !ctx.input(|i| i.pointer.any_down()) {
+			self.settings.volume = volume;
+			self.settings.save();
+		}
 	}
 
 	fn forget_recent(&mut self, path: &Path) {
@@ -2239,6 +2249,7 @@ impl eframe::App for Shell {
 		ui.painter().rect_filled(ui.max_rect(), 0.0, pal.bg);
 
 		self.poll();
+		self.save_volume(ui.ctx());
 		self.accept_drops(ui.ctx());
 		self.shortcuts(ui.ctx());
 

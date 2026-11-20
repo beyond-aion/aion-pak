@@ -524,6 +524,58 @@ pub fn show(ui: &mut egui::Ui, preview: &Preview) {
 	}
 }
 
+/// The volume of the preview, under the waveform: a slider with a speaker before it, laid out right to left. A click on the speaker
+/// mutes, another brings back the level it had.
+fn volume(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+	let mut level = audio::volume();
+	ui.spacing_mut().slider_width = 80.0;
+	let slider = ui
+		.add(egui::Slider::new(&mut level, 0..=100).show_value(false))
+		.on_hover_text(format!("Volume {level}%"));
+	if slider.changed() {
+		audio::set_volume(level);
+	}
+	let (rect, speaker) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
+	let muted_id = ui.scope_id().with("volume-before-mute");
+	if speaker.clicked() {
+		if level == 0 {
+			let before = ui.data(|d| d.get_temp::<u32>(muted_id)).unwrap_or(audio::DEFAULT_VOLUME);
+			audio::set_volume(before.max(1));
+		} else {
+			ui.data_mut(|d| d.insert_temp(muted_id, level));
+			audio::set_volume(0);
+		}
+	}
+	let level = audio::volume();
+	let speaker = speaker.on_hover_text(if level == 0 { "Unmute" } else { "Mute" });
+	let color = if speaker.hovered() { pal.text } else { pal.text_dim };
+	let r = rect.shrink(3.0);
+	let at = |x: f32, y: f32| egui::pos2(r.left() + x * r.width(), r.top() + y * r.height());
+	let painter = ui.painter();
+	let body = vec![at(0.0, 0.35), at(0.25, 0.35), at(0.55, 0.08), at(0.55, 0.92), at(0.25, 0.65), at(0.0, 0.65)];
+	painter.add(egui::Shape::convex_polygon(body, color, egui::Stroke::NONE));
+	let stroke = egui::Stroke::new(1.3, color);
+	if level == 0 {
+		painter.line_segment([at(0.72, 0.32), at(1.0, 0.68)], stroke);
+		painter.line_segment([at(0.72, 0.68), at(1.0, 0.32)], stroke);
+	} else {
+		let centre = at(0.55, 0.5);
+		for wave in 0..if level > 50 { 2 } else { 1 } {
+			let radius = r.width() * (0.22 + 0.22 * wave as f32);
+			let points = (0..=8)
+				.map(|i| {
+					let angle = -0.8 + 1.6 * i as f32 / 8.0;
+					egui::pos2(centre.x + radius * angle.cos(), centre.y + radius * angle.sin())
+				})
+				.collect();
+			painter.add(egui::Shape::line(points, stroke));
+		}
+	}
+	if speaker.hovered() {
+		ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+	}
+}
+
 /// A play button and the waveform, filled up to where playback is; a click on the waveform plays from there.
 fn sound(ui: &mut egui::Ui, clip: &Clip, pal: &crate::theme::Palette) {
 	let position = clip.position();
@@ -585,7 +637,10 @@ fn sound(ui: &mut egui::Ui, clip: &Clip, pal: &crate::theme::Palette) {
 	}
 	let channels = if clip.channels == 1 { "mono".to_owned() } else { format!("{} channels", clip.channels) };
 	let cut = if clip.truncated { " · the first 3 minutes" } else { "" };
-	ui.label(crate::theme::mono(format!("{} Hz · {channels}{cut}", clip.rate)).color(pal.muted()));
+	ui.horizontal(|ui| {
+		ui.label(crate::theme::mono(format!("{} Hz · {channels}{cut}", clip.rate)).color(pal.muted()));
+		ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| volume(ui, pal));
+	});
 	if let Some(Some(err)) = ui.data(|d| d.get_temp::<Option<String>>(error_id)) {
 		ui.label(RichText::new(err).size(12.0).color(pal.error));
 	}

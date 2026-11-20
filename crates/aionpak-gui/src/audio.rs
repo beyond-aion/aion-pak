@@ -2,7 +2,7 @@
 //! through what the system has without linking anything for it: PulseAudio's simple API loaded at run time on
 //! Linux (PipeWire serves it too), the waveOut functions of winmm on Windows.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,24 @@ use std::time::{Duration, Instant};
 const MAX_SECONDS: u64 = 180;
 /// Columns of the waveform drawn in the pane.
 pub const ENVELOPE: usize = 240;
+
+/// How loud the preview plays, from 0 to 100, for every clip; a change is heard while one plays.
+static VOLUME: AtomicU32 = AtomicU32::new(DEFAULT_VOLUME);
+pub const DEFAULT_VOLUME: u32 = 80;
+
+pub fn volume() -> u32 {
+	VOLUME.load(Relaxed)
+}
+
+pub fn set_volume(volume: u32) {
+	VOLUME.store(volume.min(100), Relaxed);
+}
+
+/// The factor the samples are scaled by: the square of the slider, so its steps sound even.
+fn gain() -> f32 {
+	let volume = volume() as f32 / 100.0;
+	volume * volume
+}
 
 pub struct Clip {
 	samples: Arc<Vec<i16>>,
@@ -202,6 +220,15 @@ mod output {
 		channels: u8,
 	}
 
+	#[repr(C)]
+	struct BufferAttr {
+		maxlength: u32,
+		tlength: u32,
+		prebuf: u32,
+		minreq: u32,
+		fragsize: u32,
+	}
+
 	const PA_STREAM_PLAYBACK: c_int = 1;
 	const PA_SAMPLE_S16LE: c_int = 3;
 
@@ -213,7 +240,7 @@ mod output {
 		*const c_char,
 		*const SampleSpec,
 		*const c_void,
-		*const c_void,
+		*const BufferAttr,
 		*mut c_int,
 	) -> *mut c_void;
 	type Write = unsafe extern "C" fn(*mut c_void, *const c_void, usize, *mut c_int) -> c_int;
@@ -242,6 +269,15 @@ mod output {
 				rate,
 				channels: channels as u8,
 			};
+			// A fifth of a second in the server's buffer instead of its default two, so the volume slider is heard
+			// at once; u32::MAX leaves the rest to the server.
+			let attr = BufferAttr {
+				maxlength: u32::MAX,
+				tlength: rate * u32::from(channels.max(1)) * 2 / 5,
+				prebuf: u32::MAX,
+				minreq: u32::MAX,
+				fragsize: u32::MAX,
+			};
 			let mut error = 0;
 			let stream = new(
 				std::ptr::null(),
@@ -251,7 +287,7 @@ mod output {
 				c"preview".as_ptr(),
 				&spec,
 				std::ptr::null(),
-				std::ptr::null(),
+				&attr,
 				&mut error,
 			);
 			if stream.is_null() {
@@ -261,12 +297,21 @@ mod output {
 			// A twentieth of a second at a time, so Stop is heard at once.
 			let chunk = (rate as usize / 20).max(1) * channels.max(1) as usize;
 			let mut done = 0usize;
+			let mut scaled = Vec::with_capacity(chunk);
 			for part in samples.chunks(chunk) {
 				if stop.load(Relaxed) {
 					flush(stream, &mut error);
 					free(stream);
 					return Ok(());
 				}
+				let gain = super::gain();
+				let part = if gain < 1.0 {
+					scaled.clear();
+					scaled.extend(part.iter().map(|&sample| (f32::from(sample) * gain) as i16));
+					&scaled[..]
+				} else {
+					part
+				};
 				if write(stream, part.as_ptr().cast(), part.len() * 2, &mut error) < 0 {
 					free(stream);
 					return Err(format!("sound output failed: PulseAudio error {error}"));
@@ -288,8 +333,14 @@ mod output {
 	use std::time::Duration;
 	use windows_sys::Win32::Media::Audio::{
 		CALLBACK_NULL, HWAVEOUT, WAVE_FORMAT_PCM, WAVE_MAPPER, WAVEFORMATEX, WAVEHDR, WHDR_DONE, waveOutClose,
-		waveOutOpen, waveOutPrepareHeader, waveOutReset, waveOutUnprepareHeader, waveOutWrite,
+		waveOutOpen, waveOutPrepareHeader, waveOutReset, waveOutSetVolume, waveOutUnprepareHeader, waveOutWrite,
 	};
+
+	/// The device volume for both channels: the low word is the left one, the high word the right.
+	fn level() -> u32 {
+		let level = (super::gain() * f32::from(u16::MAX)) as u32;
+		level | (level << 16)
+	}
 
 	pub fn play(
 		samples: &[i16],
@@ -322,6 +373,9 @@ mod output {
 				..Default::default()
 			};
 			let size = size_of::<WAVEHDR>() as u32;
+			// The whole clip goes to the device at once, so the volume is the device's, set again when it changes.
+			let mut set = level();
+			waveOutSetVolume(device, set);
 			waveOutPrepareHeader(device, &mut header, size);
 			waveOutWrite(device, &mut header, size);
 			let started = std::time::Instant::now();
@@ -333,6 +387,10 @@ mod output {
 				if stop.load(Relaxed) {
 					waveOutReset(device);
 					break;
+				}
+				if level() != set {
+					set = level();
+					waveOutSetVolume(device, set);
 				}
 				played.store(started.elapsed().as_millis() as u64, Relaxed);
 				std::thread::sleep(Duration::from_millis(15));
