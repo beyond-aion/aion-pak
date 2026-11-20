@@ -46,6 +46,12 @@ the same way. The game ignores it.
 
 <img src="assets/screenshots/pack-light.png" width="820" alt="The Pack screen in the light theme">
 
+To find where something is defined, open **Search**, choose the client folder and type the text. Every line that
+has it is listed by archive and file; click one to see the file in Browse, or right-click it to open the file in
+your editor.
+
+<img src="assets/screenshots/search-dark.png" width="820" alt="The Search screen listing the lines of the client's XML that mention Kaisinel">
+
 ## Good to know
 
 - **Windows may warn** "Windows protected your PC" on the first start, as the program is not code-signed yet.
@@ -64,8 +70,8 @@ aionpak extract Data/skills/skills.pak -o skills -d     # unpack, XML as text
 aionpak pack    skills -o Data/skills/skills.pak        # pack it back
 ```
 
-The commands are `list`, `extract`, `pack`, `repack`, `decode`, `encode`, `search`, `verify`, `compare` and `optimize`;
-`aionpak <command> --help` explains each with an example. For servers and scripts, Releases also carry
+The commands are `list`, `extract`, `pack`, `repack`, `decode`, `encode`, `search`, `verify`, `compare` and
+`optimize`; `aionpak <command> --help` explains each with an example. For servers and scripts, Releases also carry
 `aionpak-cli`, the same without the window.
 
 ## Building
