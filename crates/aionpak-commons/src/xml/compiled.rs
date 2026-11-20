@@ -89,6 +89,21 @@ impl<'a> Reader<'a> {
 	}
 }
 
+/// Every string of the pool as UTF-8, one per line: all the text a rendering takes from the file, without the
+/// markup around it. Much cheaper than rendering, so a search can tell first whether a file can match at all.
+pub fn pool_text(b: &[u8]) -> Result<String> {
+	let r = Reader::new(b)?;
+	let mut out = String::with_capacity(r.pool.len() * 3 / 2);
+	for c in char::decode_utf16(r.pool.iter().map(|p| u16::from_le_bytes(*p))) {
+		match c {
+			Ok('\0') => out.push('\n'),
+			Ok(c) => out.push(c),
+			Err(_) => return xml_err("pool string is not valid UTF-16"),
+		}
+	}
+	Ok(out)
+}
+
 pub const MAX_DEPTH: usize = 512;
 
 pub(super) fn put_varint(out: &mut Vec<u8>, mut v: u32) {

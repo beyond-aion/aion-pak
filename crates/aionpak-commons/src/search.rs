@@ -18,15 +18,77 @@ const LINE_CHARS: usize = 240;
 /// Data with a NUL byte in its first 8 KiB, after decoding, is binary and not searched, as grep and ripgrep do.
 const BINARY_PROBE: usize = 8192;
 
+/// Words of the markup a rendering of compiled XML adds around the strings of its pool: the declaration, the
+/// entities and CDATA. One per line, as the pool text is.
+const MARKUP_WORDS: &str = "xml\nversion\n1.0\nencoding\nUTF-8\namp\nlt\ngt\nquot\nCDATA\n";
+
+/// Files of these kinds are never text: they are skipped without being unpacked.
+const BINARY_EXTENSIONS: [&str; 18] = [
+	"dds", "tga", "png", "jpg", "jpeg", "bmp", "ogg", "wav", "mp3", "cgf", "cga", "caf", "chr", "anm", "ttf", "otf",
+	"fsb", "swf",
+];
+
+fn is_binary_name(name: &str) -> bool {
+	name.rsplit_once('.')
+		.is_some_and(|(_, extension)| BINARY_EXTENSIONS.iter().any(|known| extension.eq_ignore_ascii_case(known)))
+}
+
 /// What to look for.
 pub struct Query {
 	regex: Regex,
+	/// The pattern is plain text without markup characters or white space, so a match in a rendering of compiled
+	/// XML lies inside one string of its pool or one word of the markup: a file whose pool does not hold it is
+	/// skipped without being rendered.
+	pool_check: bool,
+	/// For plain text: the pattern as UTF-16LE bytes, so UTF-16 files without it are skipped unconverted.
+	utf16: Option<Regex>,
+}
+
+/// A byte pattern for `pattern` encoded as UTF-16LE, at any alignment. With `ignore_case` only ASCII patterns get
+/// one: their case variants are known (with the Kelvin sign and the long s, which fold to k and s), while other
+/// scripts fold in ways not worth reproducing for a shortcut.
+fn utf16_pattern(pattern: &str, ignore_case: bool) -> Option<Regex> {
+	if pattern.is_empty() || (ignore_case && !pattern.is_ascii()) {
+		return None;
+	}
+	let mut source = String::from("(?-u)");
+	for c in pattern.chars() {
+		let mut variants = vec![c];
+		if ignore_case && c.is_ascii_alphabetic() {
+			variants = vec![c.to_ascii_lowercase(), c.to_ascii_uppercase()];
+			match c.to_ascii_lowercase() {
+				'k' => variants.push('\u{212a}'),
+				's' => variants.push('\u{17f}'),
+				_ => {}
+			}
+		}
+		let alternatives: Vec<String> = variants
+			.iter()
+			.map(|v| {
+				let mut units = [0u16; 2];
+				v.encode_utf16(&mut units).iter().flat_map(|u| u.to_le_bytes()).map(|b| format!("\\x{b:02x}")).collect()
+			})
+			.collect();
+		source.push_str(&format!("(?:{})", alternatives.join("|")));
+	}
+	RegexBuilder::new(&source).unicode(false).build().ok()
+}
+
+/// Whether plain text `pattern` can only match inside one string of a compiled XML's pool (or `MARKUP_WORDS`).
+/// Markup characters and white space could join a pool string to the markup around it, and a pattern made only
+/// of digits, hex letters, `x` and `#` could match inside a character reference like `&#x1F;`.
+fn fits_pool(pattern: &str) -> bool {
+	!pattern.is_empty()
+		&& !pattern.chars().any(|c| c.is_whitespace() || "<>&;\"'=/!?[]".contains(c))
+		&& !pattern.chars().all(|c| c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | '#'))
 }
 
 impl Query {
 	/// `literal` takes the pattern as plain text; otherwise it is a regular expression in the syntax of the
 	/// `regex` crate. Case is ignored with `ignore_case`.
 	pub fn new(pattern: &str, literal: bool, ignore_case: bool) -> Result<Self, regex::Error> {
+		// A regular expression without special characters is plain text, and gets its shortcuts.
+		let literal = literal || regex::escape(pattern) == pattern;
 		let source = if literal { Cow::Owned(regex::escape(pattern)) } else { Cow::Borrowed(pattern) };
 		let regex = RegexBuilder::new(&source)
 			.case_insensitive(ignore_case)
@@ -34,7 +96,20 @@ impl Query {
 			.multi_line(true)
 			.size_limit(64 << 20)
 			.build()?;
-		Ok(Query { regex })
+		// A UTF-16 file is searched after its declaration is rewritten to say UTF-8; a pattern that matches there
+		// must see the converted text.
+		let declarations: [&[u8]; 2] =
+			[b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>", b"<?xml version=\"1.0\" encoding=\"UTF-16\"?>"];
+		let utf16 = if literal && !declarations.iter().any(|d| regex.is_match(d)) {
+			utf16_pattern(pattern, ignore_case)
+		} else {
+			None
+		};
+		Ok(Query {
+			regex,
+			pool_check: literal && fits_pool(pattern),
+			utf16,
+		})
 	}
 }
 
@@ -51,10 +126,26 @@ pub struct Hit {
 	pub at: std::ops::Range<usize>,
 }
 
-/// The text a search looks at: decoded XML and HTML, UTF-16 as UTF-8, other data as it is. `None` for binary data.
-fn searchable<'a>(name: &str, data: &'a [u8]) -> Option<Cow<'a, [u8]>> {
-	let decoded = match xml::detect(data) {
+/// The text a search looks at: decoded XML and HTML, UTF-16 as UTF-8, other data as it is. `None` for binary data,
+/// and for compiled XML that cannot match `query` (see `Query::pool_check`).
+fn searchable<'a>(name: &str, data: &'a [u8], query: &Query) -> Option<Cow<'a, [u8]>> {
+	let form = xml::detect(data);
+	if form == Form::Compiled
+		&& query.pool_check
+		&& xml::is_xml_name(name)
+		&& let Ok(pool) = xml::compiled::pool_text(data)
+		&& !query.regex.is_match(pool.as_bytes())
+		&& !query.regex.is_match(MARKUP_WORDS.as_bytes())
+	{
+		return None;
+	}
+	let decoded = match form {
 		Form::Compiled | Form::Encrypted if !xml::is_xml_name(name) => None,
+		// UTF-16 text that is not XML is only converted: decoding would put an XML declaration in front of it.
+		Form::Text | Form::Utf16 if !xml::is_xml_name(name) => match xml::as_text(data) {
+			Ok(text) if text.as_ptr() != data.as_ptr() => Some(text.into_owned().into_bytes()),
+			_ => None,
+		},
 		Form::Text if !data.starts_with(&[0xff, 0xfe]) && !data.starts_with(&[0xfe, 0xff]) => None,
 		_ => xml::decode(data, name, Encoding::Utf8).ok().map(|d| d.text),
 	};
@@ -64,6 +155,62 @@ fn searchable<'a>(name: &str, data: &'a [u8]) -> Option<Cow<'a, [u8]>> {
 	};
 	let probe = &text[..text.len().min(BINARY_PROBE)];
 	(!probe.contains(&0)).then_some(text)
+}
+
+const LF: [u8; 2] = [b'\n', 0];
+
+/// Whether a UTF-16LE code unit `LF` starts at `i` of `units`, which starts at a unit boundary.
+fn lf_at(units: &[u8], i: usize) -> bool {
+	i.is_multiple_of(2) && units.get(i..i + 2) == Some(&LF)
+}
+
+fn count_lf(units: &[u8]) -> usize {
+	memchr::memchr_iter(b'\n', units).filter(|&i| lf_at(units, i)).count()
+}
+
+/// The matching lines of UTF-16LE text (without its byte order mark), found in the UTF-16 itself with `utf16`; only
+/// those lines are converted, to be matched again with the query and cut as `lines` cuts them. The same hits as
+/// `lines` over the converted text, without converting a 200 MB file to find three lines in it.
+fn utf16_lines(entry: &str, units: &[u8], query: &Query, utf16: &Regex) -> Vec<Hit> {
+	let mut hits = Vec::new();
+	// Decoding XML without a declaration puts one in front, on a line of its own, and the lines are numbered as the
+	// decoded file shows them (in the preview, or extracted).
+	let first = if xml::is_xml_name(entry) && !utf16_declares(units) { 2 } else { 1 };
+	let (mut at, mut line, mut counted) = (0, first, 0);
+	while let Some(found) = utf16.find_at(units, at) {
+		// A match across two code units is no match; one starting a byte later may still be.
+		if !found.start().is_multiple_of(2) {
+			at = found.start() + 1;
+			continue;
+		}
+		let start = memchr::memrchr_iter(b'\n', &units[..found.start()])
+			.find(|&i| lf_at(units, i))
+			.map_or(0, |i| i + 2);
+		let end = memchr::memchr_iter(b'\n', &units[found.start()..])
+			.map(|i| found.start() + i)
+			.find(|&i| lf_at(units, i))
+			.unwrap_or(units.len());
+		line += count_lf(&units[counted..start]);
+		counted = start;
+		at = end + 2;
+		let text: String = char::decode_utf16(units[start..end].as_chunks::<2>().0.iter().map(|u| u16::from_le_bytes(*u)))
+			.map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+			.collect();
+		hits.extend(lines(entry, text.as_bytes(), query).into_iter().map(|hit| Hit { line, ..hit }));
+		if at >= units.len() {
+			break;
+		}
+	}
+	hits
+}
+
+/// Whether UTF-16LE text opens with an XML declaration, after white space.
+fn utf16_declares(units: &[u8]) -> bool {
+	let head = &units[..units.len().min(256)];
+	let text: String = char::decode_utf16(head.as_chunks::<2>().0.iter().map(|u| u16::from_le_bytes(*u)))
+		.map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+		.collect();
+	text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']).starts_with("<?xml")
 }
 
 /// The matching lines of `text`, one hit per line.
@@ -113,9 +260,18 @@ fn cut(entry: &str, line: usize, content: &[u8], from: usize, to: usize) -> Hit 
 }
 
 fn entry_hits(pak: &PakReader, entry: &Entry, query: &Query, codec: &mut Codec, buffer: &mut Vec<u8>) -> crate::Result<Vec<Hit>> {
-	pak.read_into(entry, codec, buffer)?;
 	let name = names::to_text(&entry.name);
-	Ok(match searchable(&name, buffer) {
+	if is_binary_name(&name) {
+		return Ok(Vec::new());
+	}
+	pak.read_into(entry, codec, buffer)?;
+	if let Some(utf16) = &query.utf16
+		&& buffer.starts_with(&[0xff, 0xfe])
+		&& buffer.len().is_multiple_of(2)
+	{
+		return Ok(utf16_lines(&name, &buffer[2..], query, utf16));
+	}
+	Ok(match searchable(&name, buffer, query) {
 		Some(text) => lines(&name, &text, query),
 		None => Vec::new(),
 	})
@@ -282,13 +438,112 @@ mod tests {
 	}
 
 	#[test]
+	fn pool_check_finds_what_a_rendering_does() {
+		let source = "<root a=\"x&amp;y\" b=\"tab&#9;\"><Kaisinel_npc id=\"7\">Text &lt; more</Kaisinel_npc>\
+			<note><![CDATA[raw <b>]]></note></root>";
+		let compiled = xml::encode(source.as_bytes(), Form::Compiled, "x.xml").unwrap().data;
+		assert_eq!(xml::detect(&compiled), Form::Compiled);
+		let rendered = xml::decode(&compiled, "x.xml", Encoding::Utf8).unwrap().text;
+		for (needle, case) in [
+			("kaisinel", false),
+			("Kaisinel_npc", true),
+			("kaisinel_npcs", false),
+			("amp", true),
+			("lt", false),
+			("CDATA", true),
+			("version", true),
+			("UTF", false),
+			("raw", true),
+			("more", false),
+			("nothing", false),
+			("x", true),
+			("9", true),
+		] {
+			let query = Query::new(needle, true, !case).unwrap();
+			let expected = lines("x.xml", &rendered, &query).len();
+			let found = searchable("x.xml", &compiled, &query).map_or(0, |text| lines("x.xml", &text, &query).len());
+			assert_eq!(found, expected, "{needle}");
+		}
+		assert!(Query::new("Kaisinel", true, true).unwrap().pool_check);
+		assert!(!Query::new("<name>", true, true).unwrap().pool_check);
+		assert!(!Query::new("a b", true, true).unwrap().pool_check);
+		assert!(!Query::new("1F", true, true).unwrap().pool_check);
+		assert!(!Query::new("Kaisinel\\w", false, true).unwrap().pool_check);
+	}
+
+	#[test]
+	fn utf16_shortcut_finds_what_converting_does() {
+		let text = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<a>Kaisinel \u{212a}ey Straße</a>\r\n\
+			<b>x</b>\r\n<c>kaisinel kaisinel</c>\n<d>Kai</d>";
+		let mut data = vec![0xff, 0xfe];
+		for unit in text.encode_utf16() {
+			data.extend_from_slice(&unit.to_le_bytes());
+		}
+		let converted = xml::decode(&data, "x.xml", Encoding::Utf8).unwrap().text;
+		for (needle, case) in [
+			("kaisinel", false),
+			("Kaisinel", true),
+			("kaisinel", true),
+			("key", false),
+			("Straße", true),
+			("strasse", false),
+			("UTF-8", true),
+			("UTF-16", true),
+			("encoding", false),
+			("> <", true),
+			("nothing", false),
+		] {
+			let query = Query::new(needle, true, !case).unwrap();
+			let expected: Vec<(usize, String)> =
+				lines("x.xml", &converted, &query).into_iter().map(|h| (h.line, h.text)).collect();
+			let found: Vec<(usize, String)> = match &query.utf16 {
+				Some(utf16) => utf16_lines("x.xml", &data[2..], &query, utf16),
+				None => lines("x.xml", &searchable("x.xml", &data, &query).unwrap(), &query),
+			}
+			.into_iter()
+			.map(|h| (h.line, h.text))
+			.collect();
+			assert_eq!(found, expected, "{needle}");
+		}
+		assert!(Query::new("kaisinel", true, true).unwrap().utf16.is_some());
+		assert!(Query::new("straße", true, true).unwrap().utf16.is_none());
+		assert!(Query::new("UTF-8", true, false).unwrap().utf16.is_none());
+	}
+
+	#[test]
+	fn utf16_lines_are_numbered_as_decoded() {
+		let utf16 = |text: &str| {
+			let mut data = vec![0xff, 0xfe];
+			for unit in text.encode_utf16() {
+				data.extend_from_slice(&unit.to_le_bytes());
+			}
+			data
+		};
+		let query = Query::new("needle", true, false).unwrap();
+		let slow = |name: &str, data: &[u8]| -> Vec<usize> {
+			lines(name, &searchable(name, data, &query).unwrap(), &query).iter().map(|h| h.line).collect()
+		};
+		let fast = |name: &str, data: &[u8]| -> Vec<usize> {
+			utf16_lines(name, &data[2..], &query, query.utf16.as_ref().unwrap()).iter().map(|h| h.line).collect()
+		};
+		let plain = utf16("a\r\nneedle\r\n");
+		let declared = utf16("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<a>needle</a>");
+		// Text is not given a declaration; XML without one is, as decoding does.
+		assert_eq!((slow("x.txt", &plain), fast("x.txt", &plain)), (vec![2], vec![2]));
+		assert_eq!((slow("x.xml", &plain), fast("x.xml", &plain)), (vec![3], vec![3]));
+		assert_eq!((slow("x.xml", &declared), fast("x.xml", &declared)), (vec![2], vec![2]));
+	}
+
+	#[test]
 	fn utf16_is_searched_as_text_and_binary_is_skipped() {
 		let mut utf16 = vec![0xff, 0xfe];
 		for unit in "<a>Привет</a>".encode_utf16() {
 			utf16.extend_from_slice(&unit.to_le_bytes());
 		}
-		let text = searchable("x.xml", &utf16).unwrap();
-		assert_eq!(lines("x.xml", &text, &Query::new("Привет", true, false).unwrap()).len(), 1);
-		assert!(searchable("x.dds", b"DDS \0\0\0").is_none());
+		let query = Query::new("Привет", true, false).unwrap();
+		let text = searchable("x.xml", &utf16, &query).unwrap();
+		assert_eq!(lines("x.xml", &text, &query).len(), 1);
+		assert!(searchable("x.dds", b"DDS \0\0\0", &query).is_none());
+		assert!(is_binary_name("Textures/a.DDS") && !is_binary_name("a.xml"));
 	}
 }

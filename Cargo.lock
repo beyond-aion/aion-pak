@@ -61,6 +61,7 @@ dependencies = [
  "encoding_rs",
  "indexmap",
  "libdeflater",
+ "memchr",
  "memmap2",
  "rayon",
  "regex",
