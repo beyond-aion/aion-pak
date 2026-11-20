@@ -41,11 +41,20 @@ enum Row {
 	Hit(usize, usize),
 }
 
-/// A file to show in Browse: the archive, the entry's name, and the line clicked, if a line was.
+/// A file of the results: the archive, the entry's name, and the line clicked, if a line was.
+#[derive(Clone)]
 pub struct Open {
 	pub archive: PathBuf,
 	pub entry: String,
 	pub line: Option<usize>,
+}
+
+/// What a click on a row asks for.
+pub enum Action {
+	/// Show the file in Browse (a left click).
+	Show(Open),
+	/// Open the file in the program the system has for it, from the row's context menu.
+	Launch(Open),
 }
 
 #[derive(Default)]
@@ -86,8 +95,8 @@ impl SearchView {
 		}
 	}
 
-	/// The results; returns the file to open when a row is clicked.
-	pub fn ui(&mut self, ui: &mut egui::Ui, pal: &Palette, running: bool) -> Option<Open> {
+	/// The results; returns what a click on a row asks for.
+	pub fn ui(&mut self, ui: &mut egui::Ui, pal: &Palette, running: bool) -> Option<Action> {
 		self.take();
 		if self.rows.is_empty() {
 			return None;
@@ -111,9 +120,9 @@ impl SearchView {
 				.show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
 					ui.spacing_mut().item_spacing.y = 0.0;
 					for index in range {
-						if let Some(clicked) = self.row(ui, pal, index) {
+						if let Some(action) = self.row(ui, pal, index) {
 							self.picked = Some(index);
-							open = Some(clicked);
+							open = Some(action);
 						}
 					}
 				});
@@ -121,7 +130,7 @@ impl SearchView {
 		open
 	}
 
-	fn row(&self, ui: &mut egui::Ui, pal: &Palette, index: usize) -> Option<Open> {
+	fn row(&self, ui: &mut egui::Ui, pal: &Palette, index: usize) -> Option<Action> {
 		let row = self.rows[index];
 		let width = ui.available_width();
 		let sense = if matches!(row, Row::Archive(_)) { Sense::hover() } else { Sense::click() };
@@ -153,11 +162,12 @@ impl SearchView {
 				let text = format!("{}  ({count})", hit.entry);
 				let galley = painter.layout_no_wrap(text, mono, pal.accent);
 				painter.galley(egui::pos2(rect.left() + 16.0, middle - galley.size().y / 2.0), galley, pal.accent);
-				response.clicked().then(|| Open {
+				let target = Open {
 					archive: self.groups[group].archive.clone(),
 					entry: hit.entry.clone(),
 					line: None,
-				})
+				};
+				act(&response, target)
 			}
 			Row::Hit(group, i) => {
 				let hit = &self.groups[group].hits[i];
@@ -168,14 +178,44 @@ impl SearchView {
 				let width = rect.right() - right - 16.0;
 				let galley = painter.layout_job(highlighted(hit, pal, mono, width, (width / digit) as usize));
 				painter.galley(egui::pos2(right + 12.0, middle - galley.size().y / 2.0), galley, pal.text);
-				response.on_hover_text(format!("{}, line {}", hit.entry, hit.line)).clicked().then(|| Open {
+				let target = Open {
 					archive: self.groups[group].archive.clone(),
 					entry: hit.entry.clone(),
 					line: Some(hit.line),
-				})
+				};
+				act(&response.on_hover_text(format!("{}, line {}", hit.entry, hit.line)), target)
 			}
 		}
 	}
+}
+
+/// A left click shows the file in Browse; the context menu opens it in the system's program instead, or copies
+/// its name.
+fn act(response: &egui::Response, target: Open) -> Option<Action> {
+	let mut action = response.clicked().then(|| Action::Show(target.clone()));
+	response.context_menu(|ui| {
+		ui.set_min_width(180.0);
+		if crate::open::is_executable(&target.entry) {
+			ui.label(
+				egui::RichText::new("Programs are not started from an archive")
+					.size(12.0)
+					.color(theme::pal(ui.ctx()).warning),
+			);
+		} else if ui.button("Open").clicked() {
+			action = Some(Action::Launch(target.clone()));
+			ui.close();
+		}
+		if ui.button("Show in Browse").clicked() {
+			action = Some(Action::Show(target.clone()));
+			ui.close();
+		}
+		ui.separator();
+		if ui.button("Copy path").clicked() {
+			ui.ctx().copy_text(target.entry.clone());
+			ui.close();
+		}
+	});
+	action
 }
 
 /// The line with the match on the accent. When the text before the match would take more than a third of the

@@ -2131,6 +2131,29 @@ impl Shell {
 		}
 	}
 
+	/// Opens an entry of any archive in the system's program, as Open in Browse does: XML and HTML as readable
+	/// text, which is what a search finds in them, everything else as stored. The archive open in Browse is read
+	/// from its reader; another is opened for this.
+	fn launch_from(&mut self, path: &Path, name: &str) {
+		let mode = if aionpak_commons::xml::is_xml_name(name) { open::Mode::Text } else { open::Mode::Raw };
+		let reader = match &self.archive {
+			Some(archive) if archive.path == path => Ok(Arc::clone(&archive.reader)),
+			_ => aionpak_commons::pak::PakReader::open(path).map(Arc::new).map_err(|e| format!("{}: {e}", path.display())),
+		};
+		let result = reader.and_then(|reader| {
+			let entry = reader
+				.entries()
+				.iter()
+				.find(|entry| aionpak_commons::names::to_text(&entry.name) == name)
+				.ok_or_else(|| format!("{name}: no longer in {}", path.display()))?;
+			open::launch(&reader, entry, name, mode)
+		});
+		if let Err(error) = result {
+			self.log_line(true, error);
+			self.log_open = true;
+		}
+	}
+
 	fn search_ui(&mut self, ui: &mut egui::Ui) {
 		self.screen_header(ui, Section::Search);
 		let open = self.open_in_browse();
@@ -2154,7 +2177,11 @@ impl Shell {
 		}
 		ui.add_space(14.0);
 		let running = self.job.as_ref().is_some_and(|job| job.kind == JobKind::Search && !job.finished);
-		if let Some(open) = self.search_view.ui(ui, &pal, running) {
+		let action = self.search_view.ui(ui, &pal, running);
+		if let Some(search_view::Action::Launch(open)) = &action {
+			self.launch_from(&open.archive, &open.entry);
+		}
+		if let Some(search_view::Action::Show(open)) = action {
 			let goto_id = egui::Id::unique(GOTO_LINE);
 			let goto = open.line.map(|line| (open.archive.clone(), open.entry.clone(), line));
 			ui.data_mut(|d| match goto {
@@ -3091,7 +3118,8 @@ const WINDOW_HELP: [(&str, &str); 10] = [
 		"Finds text inside the files of an archive, or of every archive under a folder, without extracting them. \
 		 Compiled, encrypted and UTF-16 XML and HTML are searched as readable text. Text finds the words as \
 		 typed; Regex takes a regular expression. In files narrows the search by name, as the Browse filter \
-		 does, which makes it much faster. Click a file or a line to open the file in Browse.",
+		 does, which makes it much faster. Click a file or a line to show the file in Browse, or right-click it \
+		 and choose Open to open it in your editor straight away, XML and HTML as readable text.",
 	),
 	(
 		"Pack",
