@@ -474,7 +474,7 @@ pub fn centered_button<'a>(text: impl Into<egui::WidgetText>) -> egui::Button<'a
 pub fn primary(palette: &Palette, text: &str) -> egui::Button<'static> {
 	centered_button(
 		RichText::new(text.to_owned())
-			.family(family("semibold"))
+			.family(family("medium"))
 			.size(13.5)
 			.color(palette.on_accent()),
 	)
