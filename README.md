@@ -9,6 +9,10 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-lightgrey)
 
+**Download:** [Windows (aionpak.exe)](https://github.com/beyond-aion/aion-pak/releases/latest/download/aionpak.exe) ·
+[Linux (aionpak-linux)](https://github.com/beyond-aion/aion-pak/releases/latest/download/aionpak-linux) ·
+[all files](https://github.com/beyond-aion/aion-pak/releases/latest)
+
 <img src="assets/screenshots/browse-dark.png" width="820" alt="Aion Pak showing the quest dialogs of Dialogs.pak, with a decoded preview of one of them">
 
 </div>
@@ -33,8 +37,11 @@ Everything is available in the desktop app and, with the same options, on the co
 
 ## Getting started
 
-1. Download the program from [Releases](https://github.com/beyond-aion/aion-pak/releases): `aionpak.exe` on
-   Windows, `aionpak-linux` on Linux (make it executable with `chmod +x aionpak-linux`). Nothing to install or
+1. Download the program:
+   [`aionpak.exe`](https://github.com/beyond-aion/aion-pak/releases/latest/download/aionpak.exe) on Windows,
+   [`aionpak-linux`](https://github.com/beyond-aion/aion-pak/releases/latest/download/aionpak-linux) on Linux
+   (make it executable with `chmod +x aionpak-linux`). Other files are on
+   [Releases](https://github.com/beyond-aion/aion-pak/releases/latest). Nothing to install or
    unpack. You can also [build it yourself](#building).
 2. Start it and drop a `.pak` file, or your client's folder, onto the window.
 3. Press **Extract all**. Leave **Decode XML and HTML** on to get readable text. The first time, the app asks where to put
