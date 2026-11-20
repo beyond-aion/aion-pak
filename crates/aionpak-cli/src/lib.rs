@@ -201,7 +201,7 @@ Close the game first and keep the backup.")]
 		/// Backup folder for --apply (default: <client>/aionpak-backup-<time>)
 		#[arg(long, requires = "apply")]
 		backup: Option<PathBuf>,
-		/// Recompress at this level, 0 (store) to 12
+		/// Recompress at this level, 0 (store) to 12; a file that comes out no smaller keeps the data it has
 		#[arg(short, long, default_value_t = 9, value_parser = clap::value_parser!(u8).range(0..=12))]
 		level: u8,
 		/// Copy the stored data instead of recompressing it: quicker, larger volumes

@@ -43,7 +43,7 @@ pub const MIN_VOLUME_SIZE: u64 = 50 << 20;
 const VOLUME_PREFIX: &str = "!merged_";
 
 pub struct OptimizeOptions {
-	/// Recompress at this level instead of copying the stored data.
+	/// Recompress at this level instead of copying the stored data; an entry that comes out no smaller is copied.
 	pub level: Option<u8>,
 	/// Bring every XML and HTML into this form (implies decompression).
 	pub xml: Option<Form>,
@@ -507,7 +507,13 @@ fn prepare<'a>(p: &Pick<'a>, codecs: &CodecPool, opts: &OptimizeOptions, progres
 			}
 			data = ops::decrypt(data, &name, &p.reader.path().display().to_string(), progress);
 		}
-		Prepared::compress(data, codec, &name)
+		let r = Prepared::compress(data, codec, &name)?;
+		// The same content compressed no smaller (data packed at a higher level than `level`, often 12 by an earlier
+		// run) keeps the stored data, so recompressing never grows a client.
+		if (r.crc, r.size) == (p.entry.crc, p.entry.size) && r.data.len() as u64 >= p.entry.compressed_size as u64 {
+			return Prepared::copy(p.reader, p.entry);
+		}
+		Ok(r)
 	})
 }
 
@@ -1001,12 +1007,70 @@ fn recompress(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::pak::{Codec, DosTime};
 
 	fn scratch(name: &str) -> PathBuf {
 		let d = std::env::temp_dir().join(format!("aionpak-optimize-{name}-{}", std::process::id()));
 		let _ = fs::remove_dir_all(&d);
 		fs::create_dir_all(&d).unwrap();
 		d
+	}
+
+	/// Text-like data where level 12 packs tighter than level 9.
+	fn words() -> Vec<u8> {
+		let mut x = 0x2545_f491_u32;
+		let mut out = Vec::new();
+		while out.len() < 256 << 10 {
+			x ^= x << 13;
+			x ^= x >> 17;
+			x ^= x << 5;
+			let w = ["grass", "texture", "castle", "billboard", "noise", "volume", "light", "dark"][(x % 8) as usize];
+			out.extend_from_slice(w.as_bytes());
+			out.push(if x & 0x100 == 0 { b' ' } else { b'\n' });
+		}
+		out
+	}
+
+	fn write_pak(path: &Path, name: &str, data: &[u8], level: u8) -> u32 {
+		fs::create_dir_all(path.parent().unwrap()).unwrap();
+		let (method, stored) = Codec::new(level).compress(data.to_vec());
+		let mut w = PakWriter::new(BufWriter::new(fs::File::create(path).unwrap()), Flavor::Plain);
+		w.add(&WriteEntry {
+			name: name.as_bytes(),
+			method,
+			crc: crc32fast::hash(data),
+			size: data.len() as u32,
+			prefix: &[],
+			data: &stored,
+			time: DosTime::default(),
+		})
+		.unwrap();
+		w.finish().unwrap();
+		stored.len() as u32
+	}
+
+	#[test]
+	fn lower_level_does_not_grow_entries() {
+		let dir = scratch("level");
+		let data = words();
+		let at9 = Codec::new(9).compress(data.clone()).1.len();
+		let at12 = write_pak(&dir.join("client/Data/a/a.pak"), "a.txt", &data, 12);
+		write_pak(&dir.join("client/Data/b/b.pak"), "b.txt", b"small", 12);
+		assert!(at9 > at12 as usize, "the data must pack tighter at 12 for the test to mean anything");
+		let opts = OptimizeOptions {
+			level: Some(9),
+			xml: None,
+			decrypt: false,
+			html: None,
+			volume_size: MIN_VOLUME_SIZE,
+			recompress_rest: false,
+		};
+		let outcome = optimize(&dir.join("client"), &dir.join("out"), None, &opts, &Progress::default()).unwrap();
+		let volume = dir.join("out").join(&outcome.volumes[0]);
+		let r = PakReader::open(&volume).unwrap();
+		let e = r.entries().iter().find(|e| e.name.ends_with(b"a.txt")).unwrap();
+		assert_eq!(e.compressed_size, at12);
+		let _ = fs::remove_dir_all(&dir);
 	}
 
 	#[test]
