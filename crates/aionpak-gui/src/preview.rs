@@ -530,8 +530,23 @@ fn sound(ui: &mut egui::Ui, clip: &Clip, pal: &crate::theme::Palette) {
 	let playing = position.is_some();
 	let error_id = ui.scope_id().with("sound-error");
 	ui.horizontal(|ui| {
-		let label = if playing { "■  Stop" } else { "▶  Play" };
-		if ui.add(egui::Button::new(label).min_size(Vec2::new(84.0, 26.0))).clicked() {
+		// The triangle and the square are painted: as characters they come from whatever font the system has,
+		// a colour emoji sitting above the text on Windows and a plain white one on Linux.
+		let icon = egui::IdSalt::new("sound-button-icon");
+		let label = if playing { "Stop" } else { "Play" };
+		let button = egui::Button::new((egui::Atom::custom(icon, Vec2::splat(10.0)), label))
+			.min_size(Vec2::new(84.0, 26.0))
+			.atom_ui(ui);
+		if let Some(rect) = button.rect(icon) {
+			let color = ui.style().interact(&button.response).text_color();
+			if playing {
+				ui.painter().rect_filled(rect.shrink(1.0), egui::CornerRadius::same(1), color);
+			} else {
+				let points = vec![rect.left_top(), rect.left_bottom(), egui::pos2(rect.right(), rect.center().y)];
+				ui.painter().add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+			}
+		}
+		if button.response.clicked() {
 			let result = if playing { Ok(clip.stop()) } else { clip.play(0.0) };
 			ui.data_mut(|d| d.insert_temp(error_id, result.err()));
 		}
