@@ -2,7 +2,8 @@
 name = "aionpak-cli"
 version.workspace = true
 authors.workspace = true
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Extract, pack and optimise Aion client .pak archives"
 

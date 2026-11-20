@@ -99,7 +99,7 @@ system's glibc and allocator, which take less memory on large jobs.
 
 ## Building
 
-You need [Rust](https://rustup.rs) 1.99 or newer and a C compiler (for libdeflate).
+You need [Rust](https://rustup.rs) 1.100 or newer and a C compiler (for libdeflate).
 
 ```sh
 cargo build --release

@@ -2,7 +2,8 @@
 name = "aionpak-gui"
 version.workspace = true
 authors.workspace = true
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Desktop browser and job runner for Aion client .pak archives"
 

@@ -2,7 +2,8 @@
 name = "aionpak-commons"
 version.workspace = true
 authors.workspace = true
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Shared code of the aionpak tools: the archive format, the client's XML forms and the job plumbing"
 
